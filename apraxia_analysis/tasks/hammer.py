@@ -444,7 +444,7 @@ def process_hammer_trial(
             if step > outlier_jump_th:
                 outlier_flag[i] = 1
 
-    # clean series used for interpolation/smoothing
+    # 外れ値フレームを NaN にしてから補間・平滑化に使う（生値は残す）
     x_for_interp = x_raw.copy()
     y_for_interp = y_raw.copy()
     if outlier_enabled and int(outlier_flag.sum()) > 0:
@@ -497,6 +497,8 @@ def process_hammer_trial(
     if not (0 <= w0 < len(df) and 0 <= w1 < len(df) and w1 > w0):
         w0, w1 = 0, len(df) - 1
 
+    # MediaPipe の画像座標は Y 軸が下向き正のため、ハンマーの打鍵点（最も手が下がる瞬間）は
+    # Y が最大値になる。-y_sm にすることで打鍵点が局所極大になり、find_peaks で正しく検出できる。
     sig = -y_sm[w0 : w1 + 1]
     if np.isfinite(sig).any():
         lo, hi = np.nanpercentile(sig, [5, 95])
@@ -538,6 +540,7 @@ def process_hammer_trial(
             amp_y = float(np.nanmax(seg) - np.nanmin(seg))
             if np.isfinite(min_amp_y_local) and amp_y < float(min_amp_y_local):
                 continue
+            # seg 内の Y 最大点 = 手が最も下に下がった打鍵点（hit_i）
             low = s + int(np.nanargmax(seg))
 
             cycle_time = (e - s) / fps
@@ -648,6 +651,8 @@ def process_hammer_trial(
         )
         return cycles_local, is_upper_local, is_lower_local, cycle_pf_local, is_cs_local, up, w0_local, w1_local
 
+    # 3段階の閾値セット（prominence・振れ幅・探索パッドをそれぞれ段階的に緩和）。
+    # target 数に達した時点で打ち切り（過剰な緩和を防ぐ）。
     prom_list = [
         float(prom),
         max(float(cfg.peak_prom_min_abs) * 0.60, float(prom) * 0.75),
@@ -662,8 +667,10 @@ def process_hammer_trial(
     for i, (p_i, a_i, pad_i) in enumerate(zip(prom_list, amp_list, pad_list)):
         pack = _detect_once(p_i, a_i, extra_pad_frames=pad_i)
         cycles_i = pack[0]
+        # より多くのサイクルが取れた場合に best_pack を更新する
         if best_pack is None or len(cycles_i) > len(best_pack[0]):
             best_pack = (*pack, p_i, a_i, i)
+        # target 個以上得られたので、これ以上閾値を緩和しない
         if target > 0 and len(cycles_i) >= target:
             best_pack = (*pack, p_i, a_i, i)
             break
@@ -693,6 +700,7 @@ def process_hammer_trial(
 
     if len(cycles_df) > 0 and target > 0:
         if len(cycles_df) >= target:
+            # hammer はサイクル時間 CV 最小の窓を選ぶ（comehere の波形優先とは異なる）
             best_start, best_cv = select_best_contiguous_cycles_by_cv(
                 cycles_df["cycle_time_s"].to_numpy(dtype=float),
                 target=target,
@@ -788,6 +796,8 @@ def process_hammer_trial(
     else:
         sel_label = "none"
 
+    # 選択ブロック内のウォームアップ（1-3番）と疲労（9-10番）を除いた
+    # 中間サイクル（use_cycles_from〜use_cycles_to）を集計指標の算出に使う
     if n_sel >= int(cfg.use_cycles_to) and "cycle_id10" in sel.columns:
         use = sel[(sel["cycle_id10"] >= int(cfg.use_cycles_from)) & (sel["cycle_id10"] <= int(cfg.use_cycles_to))].copy()
         selected = f"{sel_label}; use {cfg.use_cycles_from}-{cfg.use_cycles_to}"
@@ -833,6 +843,8 @@ def process_hammer_trial(
         "best10_min_corr": float(best_min_corr) if np.isfinite(best_min_corr) else float("nan"),
         "waveform_resample_n": int(getattr(cfg, "waveform_resample_n", 100)),
         "waveform_min_corr_th": float(getattr(cfg, "waveform_min_corr", 0.75)),
+        # 合格条件: ① target 個以上検出 ② 選択ブロックの最小相関値が閾値以上
+        # （byebye/comehere は n_sel == target を要求するが、hammer は n_all >= target でよい）
         "waveform_pass_10": int(
             (int(n_all) >= int(target))
             and np.isfinite(float(best_min_corr))
