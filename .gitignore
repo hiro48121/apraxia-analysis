@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# 解析結果（CSV・PNG・動画は管理しない）
+*.csv
+*.png
+*.jpg
+*.jpeg
+*.mov
+*.mp4
+*.avi
+*.MOV
+*.MP4
+*.AVI
+
+# MediaPipeモデルファイル（大容量のため除外）
+*.task
+*.tflite
+
+# アプリ設定（個人の環境依存）
+.apraxia_app_config.json
+
+# macOS
+.DS_Store
+.AppleDouble
+__MACOSX/
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+*.swo
