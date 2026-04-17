@@ -80,7 +80,11 @@ def _detect_cycles_byebye(
     min_cycle_s: float,
     max_cycle_s: float,
 ) -> dict[str, Any]:
-    """Multi-attempt cycle detection for byebye (up to 3 progressively relaxed thresholds).
+    """byebye のサイクル検出（最大3段階でプロミネンス閾値を段階的に緩和）。
+
+    バイバイ動作は振れ幅にばらつきが出やすいため、1段階目の厳しい閾値で
+    target_n 個以上検出できない場合に備えて閾値を段階的に下げる。
+    target_n 個以上得られた時点で打ち切り（過剰な緩和を防ぐ）。
 
     Returns a dict with keys: maxima_f, minima_f, cycles_all, selected_cycles,
     selected_cv, selected_window_start_idx, detect_attempt_used,
@@ -95,6 +99,7 @@ def _detect_cycles_byebye(
     if search_end < search_start:
         return _empty
 
+    # 3段階の閾値セット（比率・絶対値・振れ幅をそれぞれ 100% → 85% → 70% に緩和）
     detect_attempt_prom_ratio = [
         float(min_prom_ratio),
         max(0.01, float(min_prom_ratio) * 0.85),
@@ -152,8 +157,10 @@ def _detect_cycles_byebye(
             "amp_px_used": float(amp_px_i),
         }
 
+        # より多くのサイクルが取れた場合に best_pack を更新する
         if (best_pack is None) or (len(cycles_i) > len(best_pack["cycles_all"])):
             best_pack = pack_i
+        # target_n 個以上得られたので、これ以上閾値を緩和しない
         if target_n > 0 and len(cycles_i) >= target_n:
             best_pack = pack_i
             break
@@ -167,7 +174,7 @@ def _detect_cycles_byebye(
         detect_prom_px_used = float(best_pack["prom_px_used"])
         detect_amp_px_used = float(best_pack["amp_px_used"])
 
-    # Select contiguous target_n cycles with minimum CV
+    # 全検出サイクルの中から、連続 target_n 個でサイクル時間の CV が最小の窓を選ぶ
     if len(cycles_all) >= target_n and target_n > 0:
         selected_cycles, selected_cv, selected_window_start_idx = select_best_contiguous_cycles_by_cv(
             cycles_all, fps=fps, target_n=target_n
@@ -195,9 +202,10 @@ def _compute_waveform_qc(
     waveform_min_corr: float,
     target_cycles: int,
 ) -> tuple[int, float, float]:
-    """Waveform similarity QC for the selected (selected10==1) cycle block.
+    """選択ブロック（selected10==1）の波形類似度 QC を計算する。
 
-    Modifies *cycles_df* in-place to write back ``wave_corr_to_mean10``.
+    各サイクルを resample_n 点にリサンプリングし、ブロック平均波形との
+    Pearson 相関を求める。cycles_df の wave_corr_to_mean10 列を in-place で更新。
     Returns (waveform_pass_10, wave_mean_corr_10, wave_min_corr_10).
     """
     n_sel = int((cycles_df.get("selected10", 0) == 1).sum()) if len(cycles_df) > 0 else 0
@@ -221,6 +229,8 @@ def _compute_waveform_qc(
                 wave_mean_corr_10 = float(np.nanmean(corrs))
                 wave_min_corr_10 = float(np.nanmin(corrs))
 
+        # 合格条件：① 選択サイクルがぴったり target_cycles 個
+        #          ② 全サイクルの相関値が有限かつ閾値以上
         if (n_sel == target_cycles) and (len(corrs) == n_sel) and np.all(np.isfinite(corrs)) and np.all(corrs >= float(waveform_min_corr)):
             waveform_pass_10 = 1
         else:
@@ -375,18 +385,19 @@ def run_byebye(argv: list[str] | None = None) -> None:
     base_x = raw_df["shoulder_x_px"].to_numpy(dtype=float)
     base_y = raw_df["shoulder_y_px"].to_numpy(dtype=float)
 
-    # Representative index (raw): Hand INDEX_TIP preferred, else Pose INDEX
+    # 代表指先座標（生値）: Hand INDEX_TIP が取得できた場合は優先（精度が高いため）、
+    # 取得できなければ Pose の INDEX を使用する
     ix_raw = raw_df["index_x_px"].to_numpy(dtype=float)
     iy_raw = raw_df["index_y_px"].to_numpy(dtype=float)
 
-    # For outlier checks
+    # 外れ値検出に使う補助情報（どちらのモデルの値かと、両モデルそれぞれの座標）
     index_source_arr = raw_df["index_source"].to_numpy()
     pose_ix_x = raw_df["pose_index_x_px"].to_numpy(dtype=float)
     pose_ix_y = raw_df["pose_index_y_px"].to_numpy(dtype=float)
     hand_ix_x = raw_df["hand_index_tip_x_px"].to_numpy(dtype=float)
     hand_ix_y = raw_df["hand_index_tip_y_px"].to_numpy(dtype=float)
 
-    # Outlier handling (default: enabled). This does NOT delete raw; it creates clean series for analysis.
+    # 外れ値処理（デフォルト有効）。生値は残し、補正済みシリーズを解析に使う（方式A）。
     if bool(args.outlier_disable):
         outlier_flag = np.zeros(len(raw_df), dtype=int)
         outlier_reason = np.array([""] * len(raw_df), dtype=object)
@@ -411,7 +422,7 @@ def run_byebye(argv: list[str] | None = None) -> None:
         max_gap_frames = max(1, max_gap_frames)
         ix_clean, iy_clean = apply_outlier_cleaning_2d(ix_raw, iy_raw, outlier_flag, max_gap_frames)
 
-    # Raw & clean kinematics
+    # 生値・外れ値補正済みの運動学量（指先とショルダー基準点との差分）
     dx_raw = ix_raw - base_x
     dy_raw = iy_raw - base_y
     dist_raw = np.hypot(dx_raw, dy_raw)
@@ -422,7 +433,7 @@ def run_byebye(argv: list[str] | None = None) -> None:
     dist_clean = np.hypot(dx_clean, dy_clean)
     dist_smooth_clean = rolling_mean(dist_clean, 5)
 
-    # cycle signal (raw and clean). Cycle detection uses the *clean* signal.
+    # サイクル検出シグナル（生値と外れ値補正済み）。サイクル検出には clean 系列を使用する。
     if args.cycle_signal == "dx":
         sig_raw = dx_raw
         sig_used = dx_clean
@@ -435,18 +446,18 @@ def run_byebye(argv: list[str] | None = None) -> None:
 
     win_sig = int(max(3, round(float(args.smooth_sec) * float(fps))))
     if win_sig % 2 == 0:
-        win_sig += 1
+        win_sig += 1  # rolling_mean(center=True) は奇数ウィンドウが必要
 
     sig_smooth_raw = rolling_mean(sig_raw, win_sig)
     sig_smooth = rolling_mean(sig_used, win_sig)
 
-    # speed (index tip)
+    # 指先速度（動作開始の補助指標として使用）
     speed_index_raw = speed_series_px_s(ix_raw, iy_raw, fps)
     speed_index_clean_raw = speed_series_px_s(ix_clean, iy_clean, fps)
     speed_index_smooth_raw = rolling_mean(speed_index_raw, int(max(1, args.onset_speed_smooth_win)))
     speed_index_smooth = rolling_mean(speed_index_clean_raw, int(max(1, args.onset_speed_smooth_win)))
 
-    # speed (wrist) - used for onset + movement trimming (hand wrist preferred)
+    # 手首速度（動作開始検出・区間トリミングに使用。Hand モデルの手首を優先し、なければ Pose 手首で補う）
     pose_wrx = raw_df["wrist_x_px"].to_numpy(dtype=float)
     pose_wry = raw_df["wrist_y_px"].to_numpy(dtype=float)
     hand_wrx = raw_df["hand_wrist_x_px"].to_numpy(dtype=float)
@@ -508,7 +519,7 @@ def run_byebye(argv: list[str] | None = None) -> None:
     start_search_frame0 = int(cue + float(args.start_search_sec) * float(fps))
     search_end0 = int(len(sig_smooth_for_peaks) - 1)
 
-    # Cycle search window: default はtrim segmentを優先
+    # サイクル探索範囲: byebye はデフォルトで trim セグメント内に制限（動作区間外のノイズを除外するため）
     search_start = int(start_search_frame0)
     search_end = int(search_end0)
     cycle_search_used_trim = 0
@@ -541,7 +552,7 @@ def run_byebye(argv: list[str] | None = None) -> None:
     detect_prom_ratio_used = det["detect_prom_ratio_used"]
     detect_prom_px_used = det["detect_prom_px_used"]
     detect_amp_px_used = det["detect_amp_px_used"]
-    best_mean_corr, best_min_corr = np.nan, np.nan  # byebye uses CV-only selection
+    best_mean_corr, best_min_corr = np.nan, np.nan  # byebye は CV 最小のみで選択するため波形相関は使わない
 
     # -------------------------
     # frames.csv (always saved)
@@ -557,8 +568,8 @@ def run_byebye(argv: list[str] | None = None) -> None:
     # combined wrist (hand preferred) for waveform export & QC
     frames["wrist_x_px_raw"] = wrist_x
     frames["wrist_y_px_raw"] = wrist_y
-    # Representative index (INDEX_TIP preferred, else pose INDEX)
-        # outlier info
+
+    # 外れ値フラグ（frames.csv の列として保持）
     frames["outlier_flag"] = outlier_flag
     frames["outlier_reason"] = outlier_reason
     frames["outlier_step_px"] = outlier_step_px

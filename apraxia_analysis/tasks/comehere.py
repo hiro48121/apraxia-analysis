@@ -82,11 +82,12 @@ def _detect_cycles_comehere(
     index_y_sm: np.ndarray,
     waveform_resample_n: int,
 ) -> dict[str, Any]:
-    """Single-pass cycle detection + waveform-priority block selection for comehere.
+    """comehere のサイクル検出（単回）と波形一貫性優先のブロック選択。
 
-    Selects the best contiguous block by waveform consistency first, then CV
-    (``_best_contiguous_block_by_waveform_then_cv``). Returns a dict with keys:
-    maxima_f, minima_f, cycles_all, selected_cycles, selected_cv,
+    おいでおいで動作は振れ幅が比較的安定しているため、byebye のような多段階
+    閾値緩和は行わず単回検出とする。ブロック選択は波形の一貫性を優先し、
+    同等の場合にサイクル時間 CV が最小の窓を選ぶ（``_best_contiguous_block_by_waveform_then_cv``）。
+    Returns a dict with keys: maxima_f, minima_f, cycles_all, selected_cycles, selected_cv,
     selected_window_start_idx, best_mean_corr, best_min_corr.
     """
     _empty: dict[str, Any] = {
@@ -119,7 +120,7 @@ def _detect_cycles_comehere(
         max_cycle_s=float(max_cycle_s),
     )
 
-    # Select the best contiguous block of N cycles (波形の一貫性を優先し、同等ならCV最小)
+    # target_n 個の連続ブロックを選択: 波形一貫性を優先し、同等ならサイクル時間CVが最小の窓を選ぶ
     if len(cycles_all) >= target_n and target_n > 0:
         tmp_cycles = pd.DataFrame([
             {"start_frame": int(c["start_frame"]), "end_frame": int(c["end_frame"])}
@@ -184,6 +185,7 @@ def _compute_waveform_qc(
                 wave_mean_corr_10 = float(np.nanmean(corrs))
                 wave_min_corr_10 = float(np.nanmin(corrs))
 
+        # 合格条件：① 選択サイクルがぴったり target_cycles 個 ② 全サイクルの相関値が有限かつ閾値以上
         if (n_sel == target_cycles) and (len(corrs) == n_sel) and np.all(np.isfinite(corrs)) and np.all(corrs >= float(waveform_min_corr)):
             waveform_pass_10 = 1
         else:
@@ -332,18 +334,19 @@ def run_comehere(argv: list[str] | None = None) -> None:
     base_x = raw_df["shoulder_x_px"].to_numpy(dtype=float)
     base_y = raw_df["shoulder_y_px"].to_numpy(dtype=float)
 
-    # Representative index (raw): Hand INDEX_TIP preferred, else Pose INDEX
+    # 代表指先座標（生値）: Hand INDEX_TIP が取得できた場合は優先（精度が高いため）、
+    # 取得できなければ Pose の INDEX を使用する
     ix_raw = raw_df["index_x_px"].to_numpy(dtype=float)
     iy_raw = raw_df["index_y_px"].to_numpy(dtype=float)
 
-    # For outlier checks
+    # 外れ値検出に使う補助情報（どちらのモデルの値かと、両モデルそれぞれの座標）
     index_source_arr = raw_df["index_source"].to_numpy()
     pose_ix_x = raw_df["pose_index_x_px"].to_numpy(dtype=float)
     pose_ix_y = raw_df["pose_index_y_px"].to_numpy(dtype=float)
     hand_ix_x = raw_df["hand_index_tip_x_px"].to_numpy(dtype=float)
     hand_ix_y = raw_df["hand_index_tip_y_px"].to_numpy(dtype=float)
 
-    # Outlier handling (default: enabled). This does NOT delete raw; it creates clean series for analysis.
+    # 外れ値処理（デフォルト有効）。生値は残し、補正済みシリーズを解析に使う（方式A）。
     if bool(args.outlier_disable):
         outlier_flag = np.zeros(len(raw_df), dtype=int)
         outlier_reason = np.array([""] * len(raw_df), dtype=object)
@@ -368,7 +371,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
         max_gap_frames = max(1, max_gap_frames)
         ix_clean, iy_clean = apply_outlier_cleaning_2d(ix_raw, iy_raw, outlier_flag, max_gap_frames)
 
-    # Raw & clean kinematics
+    # 生値・外れ値補正済みの運動学量（指先とショルダー基準点との差分）
     dx_raw = ix_raw - base_x
     dy_raw = iy_raw - base_y
     dist_raw = np.hypot(dx_raw, dy_raw)
@@ -379,7 +382,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
     dist_clean = np.hypot(dx_clean, dy_clean)
     dist_smooth_clean = rolling_mean(dist_clean, 5)
 
-    # cycle signal (raw and clean). Cycle detection uses the *clean* signal.
+    # サイクル検出シグナル（生値と外れ値補正済み）。サイクル検出には clean 系列を使用する。
     if args.cycle_signal == "dx":
         sig_raw = dx_raw
         sig_used = dx_clean
@@ -392,18 +395,18 @@ def run_comehere(argv: list[str] | None = None) -> None:
 
     win_sig = int(max(3, round(float(args.smooth_sec) * float(fps))))
     if win_sig % 2 == 0:
-        win_sig += 1
+        win_sig += 1  # rolling_mean(center=True) は奇数ウィンドウが必要
 
     sig_smooth_raw = rolling_mean(sig_raw, win_sig)
     sig_smooth = rolling_mean(sig_used, win_sig)
 
-    # speed (index tip)
+    # 指先速度（動作開始の補助指標として使用）
     speed_index_raw = speed_series_px_s(ix_raw, iy_raw, fps)
     speed_index_clean_raw = speed_series_px_s(ix_clean, iy_clean, fps)
     speed_index_smooth_raw = rolling_mean(speed_index_raw, int(max(1, args.onset_speed_smooth_win)))
     speed_index_smooth = rolling_mean(speed_index_clean_raw, int(max(1, args.onset_speed_smooth_win)))
 
-    # speed (wrist) - used for onset + movement trimming (hand wrist preferred)
+    # 手首速度（動作開始検出・区間トリミングに使用。Hand モデルの手首を優先し、なければ Pose 手首で補う）
     pose_wrx = raw_df["wrist_x_px"].to_numpy(dtype=float)
     pose_wry = raw_df["wrist_y_px"].to_numpy(dtype=float)
     hand_wrx = raw_df["hand_wrist_x_px"].to_numpy(dtype=float)
@@ -465,7 +468,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
     start_search_frame0 = int(cue + float(args.start_search_sec) * float(fps))
     search_end0 = int(len(sig_smooth_for_peaks) - 1)
 
-    # Cycle search window (less dependent on trimming by default)
+    # サイクル探索範囲: comehere はデフォルトで trim に依存しない（動作区間の検出精度に左右されないよう全体を探索）
     search_start = int(start_search_frame0)
     search_end = int(search_end0)
     cycle_search_used_trim = 0
@@ -476,7 +479,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
             search_end = min(search_end, int(trim_end_frame))
         cycle_search_used_trim = 1
 
-    # index_y_sm is needed for waveform-based block selection inside _detect_cycles_comehere
+    # comehere の主運動方向は縦（Y 軸）のため、index_y_sm をブロック選択の波形基準に使う
     win_wrist = _odd(int(round(float(args.smooth_sec) * float(fps))))
     index_y_sm = rolling_mean(iy_clean, win_wrist)
 
@@ -517,8 +520,8 @@ def run_comehere(argv: list[str] | None = None) -> None:
     # combined wrist (hand preferred) for waveform export & QC
     frames["wrist_x_px_raw"] = wrist_x
     frames["wrist_y_px_raw"] = wrist_y
-    # Representative index (INDEX_TIP preferred, else pose INDEX)
-        # outlier info
+
+    # 外れ値フラグ（frames.csv の列として保持）
     frames["outlier_flag"] = outlier_flag
     frames["outlier_reason"] = outlier_reason
     frames["outlier_step_px"] = outlier_step_px
@@ -704,7 +707,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
         "target_cycles": int(args.target_cycles),
         "n_cycles_selected10": int(n_sel),
         "selected_cycles_cv": float(selected_cv) if np.isfinite(selected_cv) else np.nan,
-        # QC values for the selected 10-cycle window (not selection criteria).
+        # 選択ウィンドウの波形類似度（選択基準ではなく、選択後の事後 QC 値）
         "selected_window_wave_mean_corr": float(best_mean_corr) if np.isfinite(best_mean_corr) else np.nan,
         "selected_window_wave_min_corr": float(best_min_corr) if np.isfinite(best_min_corr) else np.nan,
         "selected_window_start_index": int(selected_window_start_idx),
@@ -728,7 +731,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
 
         "waveform_resample_n": int(args.waveform_resample_n),
         "waveform_min_corr_th": float(args.waveform_min_corr),
-        # QC values for waveform similarity in the selected 10-cycle window (not selection criteria).
+        # 選択10サイクルの波形類似度 QC（waveform_pass_10 の判定に使う）
         "waveform_mean_corr_10": wave_mean_corr_10,
         "waveform_min_corr_10": wave_min_corr_10,
         "waveform_pass_10": int(waveform_pass_10),
