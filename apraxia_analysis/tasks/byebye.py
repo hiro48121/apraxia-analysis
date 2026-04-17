@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -36,68 +37,200 @@ from ..core.math_utils import (
 from ..core.video_extractor import extract_pose_hand_px_from_video
 
 
-# =========================
-# byebye-specific waveform PNG
-# =========================
+# ─── byebye固有ユーティリティ ─────────────────────────────────────────────────
 
-def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
-    """Save waveform png for byebye. Prefer cleaned cycle-signal / index-x so the exported waveform matches lateral byebye motion and reflects outlier processing."""
-    import matplotlib.pyplot as plt
+def _cycle_time_stats(df: pd.DataFrame) -> tuple[float, float, float]:
+    """Compute mean, SD, CV of cycle_time_s. Returns (mean, sd, cv) — NaN if insufficient data."""
+    if df is None or len(df) == 0 or "cycle_time_s" not in df.columns:
+        return np.nan, np.nan, np.nan
+    t = df["cycle_time_s"].to_numpy(dtype=float)
+    if not np.any(np.isfinite(t)):
+        return np.nan, np.nan, np.nan
+    t_mean = float(np.nanmean(t))
+    t_sd = float(np.nanstd(t, ddof=1)) if np.sum(np.isfinite(t)) >= 2 else np.nan
+    cv = float(t_sd / t_mean) if (np.isfinite(t_sd) and t_mean != 0) else np.nan
+    return t_mean, t_sd, cv
 
-    out_dir = Path(out_dir)
-    stem = out_dir.name
 
-    x = frames_df["time_s"] if "time_s" in frames_df.columns else (
-        frames_df["t_s"] if "t_s" in frames_df.columns else frames_df.get("frame_idx", frames_df.index)
-    )
+def _add_cycle_means(meta: dict[str, Any], prefix: str, df: pd.DataFrame) -> None:
+    """Append nanmean of each cycle metric to *meta* under ``{prefix}{key}_mean_over_cycles``."""
+    if df is None or len(df) == 0:
+        return
+    for k in [
+        "area_px2", "x_range_px", "y_range_px", "traj_len_px", "max_speed_px_s",
+        "dist_range_px", "plane_deg",
+        "shoulder_deg_range", "elbow_deg_range", "wrist_deg_range", "index_mcp_deg_range",
+        "shoulder_deg_mean", "elbow_deg_mean", "wrist_deg_mean", "index_mcp_deg_mean",
+    ]:
+        if k in df.columns:
+            meta[f"{prefix}{k}_mean_over_cycles"] = float(np.nanmean(df[k].to_numpy(dtype=float)))
 
-    # For byebye, the lateral component is the main cycle signal.
-    # Prefer the cleaned/smoothed cycle-signal first, then cleaned index-x, then raw x.
-    if "cycle_signal_smooth_px" in frames_df.columns:
-        y = frames_df["cycle_signal_smooth_px"]
-        ylab = "cycle_signal_smooth_px"
-    elif "cycle_signal_px" in frames_df.columns:
-        y = frames_df["cycle_signal_px"]
-        ylab = "cycle_signal_px"
-    elif "index_x_px_sm" in frames_df.columns:
-        y = frames_df["index_x_px_sm"]
-        ylab = "index_x_px_sm"
-    elif "index_x_px_clean" in frames_df.columns:
-        y = frames_df["index_x_px_clean"]
-        ylab = "index_x_px_clean"
-    elif "index_x_px_raw" in frames_df.columns:
-        y = frames_df["index_x_px_raw"]
-        ylab = "index_x_px_raw"
-    elif "index_x_px_sm_raw" in frames_df.columns:
-        y = frames_df["index_x_px_sm_raw"]
-        ylab = "index_x_px_sm_raw"
-    elif "wrist_x_px_sm" in frames_df.columns:
-        y = frames_df["wrist_x_px_sm"]
-        ylab = "wrist_x_px_sm"
-    elif "wrist_x_px_raw" in frames_df.columns:
-        y = frames_df["wrist_x_px_raw"]
-        ylab = "wrist_x_px_raw"
+
+def _detect_cycles_byebye(
+    sig_smooth_for_peaks: np.ndarray,
+    fps: float,
+    search_start: int,
+    search_end: int,
+    target_n: int,
+    min_sep_frames: int,
+    prom_win_frames: int,
+    min_prom_ratio: float,
+    min_prom_px: float,
+    min_amp_px: float,
+    min_cycle_s: float,
+    max_cycle_s: float,
+) -> dict[str, Any]:
+    """Multi-attempt cycle detection for byebye (up to 3 progressively relaxed thresholds).
+
+    Returns a dict with keys: maxima_f, minima_f, cycles_all, selected_cycles,
+    selected_cv, selected_window_start_idx, detect_attempt_used,
+    detect_prom_ratio_used, detect_prom_px_used, detect_amp_px_used.
+    """
+    _empty: dict[str, Any] = {
+        "maxima_f": [], "minima_f": [], "cycles_all": [],
+        "selected_cycles": [], "selected_cv": np.nan, "selected_window_start_idx": 0,
+        "detect_attempt_used": 0,
+        "detect_prom_ratio_used": np.nan, "detect_prom_px_used": np.nan, "detect_amp_px_used": np.nan,
+    }
+    if search_end < search_start:
+        return _empty
+
+    detect_attempt_prom_ratio = [
+        float(min_prom_ratio),
+        max(0.01, float(min_prom_ratio) * 0.85),
+        max(0.01, float(min_prom_ratio) * 0.70),
+    ]
+    detect_attempt_prom_px = [
+        float(min_prom_px),
+        max(0.0, float(min_prom_px) * 0.75),
+        max(0.0, float(min_prom_px) * 0.50),
+    ]
+    detect_attempt_amp_px = [
+        float(min_amp_px),
+        max(1.0, float(min_amp_px) * 0.85),
+        max(1.0, float(min_amp_px) * 0.70),
+    ]
+
+    maxima_f: list[int] = []
+    minima_f: list[int] = []
+    cycles_all: list[dict[str, Any]] = []
+    detect_attempt_used = 0
+    detect_prom_ratio_used = np.nan
+    detect_prom_px_used = np.nan
+    detect_amp_px_used = np.nan
+    best_pack = None
+
+    for att_i, (prom_ratio_i, prom_px_i, amp_px_i) in enumerate(
+        zip(detect_attempt_prom_ratio, detect_attempt_prom_px, detect_attempt_amp_px)
+    ):
+        maxima_i, minima_i = find_local_extrema_prom(
+            sig_smooth_for_peaks,
+            min_sep_frames=min_sep_frames,
+            min_amp_px=float(amp_px_i),
+            min_prom_ratio=float(prom_ratio_i),
+            min_prom_px=float(prom_px_i),
+            prom_win_frames=prom_win_frames,
+        )
+        maxima_f_i = [i for i in maxima_i if search_start <= i <= search_end]
+        minima_f_i = [i for i in minima_i if search_start <= i <= search_end]
+
+        cycles_i = build_cycles_from_extrema(
+            sig_smooth_for_peaks,
+            maxima_f_i,
+            minima_f_i,
+            start_search_frame=search_start,
+            fps=fps,
+            min_cycle_s=float(min_cycle_s),
+            max_cycle_s=float(max_cycle_s),
+        )
+
+        pack_i = {
+            "maxima_f": maxima_f_i, "minima_f": minima_f_i, "cycles_all": cycles_i,
+            "attempt_used": int(att_i),
+            "prom_ratio_used": float(prom_ratio_i),
+            "prom_px_used": float(prom_px_i),
+            "amp_px_used": float(amp_px_i),
+        }
+
+        if (best_pack is None) or (len(cycles_i) > len(best_pack["cycles_all"])):
+            best_pack = pack_i
+        if target_n > 0 and len(cycles_i) >= target_n:
+            best_pack = pack_i
+            break
+
+    if best_pack is not None:
+        maxima_f = best_pack["maxima_f"]
+        minima_f = best_pack["minima_f"]
+        cycles_all = best_pack["cycles_all"]
+        detect_attempt_used = int(best_pack["attempt_used"])
+        detect_prom_ratio_used = float(best_pack["prom_ratio_used"])
+        detect_prom_px_used = float(best_pack["prom_px_used"])
+        detect_amp_px_used = float(best_pack["amp_px_used"])
+
+    # Select contiguous target_n cycles with minimum CV
+    if len(cycles_all) >= target_n and target_n > 0:
+        selected_cycles, selected_cv, selected_window_start_idx = select_best_contiguous_cycles_by_cv(
+            cycles_all, fps=fps, target_n=target_n
+        )
     else:
-        y = frames_df.iloc[:, 0]
-        ylab = frames_df.columns[0]
+        selected_cycles = cycles_all
+        selected_cv = np.nan
+        selected_window_start_idx = 0
 
-    plt.figure()
-    plt.plot(x, y)
-    plt.xlabel("time_s" if "time_s" in frames_df.columns else "frame_idx")
-    plt.ylabel(ylab)
-    plt.title(stem)
+    return {
+        "maxima_f": maxima_f, "minima_f": minima_f, "cycles_all": cycles_all,
+        "selected_cycles": selected_cycles, "selected_cv": selected_cv,
+        "selected_window_start_idx": selected_window_start_idx,
+        "detect_attempt_used": detect_attempt_used,
+        "detect_prom_ratio_used": detect_prom_ratio_used,
+        "detect_prom_px_used": detect_prom_px_used,
+        "detect_amp_px_used": detect_amp_px_used,
+    }
 
-    png = out_dir / f"waveform_{stem}.png"
-    plt.savefig(png, dpi=200, bbox_inches="tight")
-    plt.close()
-    return png
+
+def _compute_waveform_qc(
+    cycles_df: pd.DataFrame,
+    signal_array: np.ndarray,
+    waveform_resample_n: int,
+    waveform_min_corr: float,
+    target_cycles: int,
+) -> tuple[int, float, float]:
+    """Waveform similarity QC for the selected (selected10==1) cycle block.
+
+    Modifies *cycles_df* in-place to write back ``wave_corr_to_mean10``.
+    Returns (waveform_pass_10, wave_mean_corr_10, wave_min_corr_10).
+    """
+    n_sel = int((cycles_df.get("selected10", 0) == 1).sum()) if len(cycles_df) > 0 else 0
+    waveform_pass_10 = 0
+    wave_mean_corr_10 = np.nan
+    wave_min_corr_10 = np.nan
+
+    if n_sel > 0 and len(cycles_df) > 0:
+        sel_df = cycles_df[cycles_df["selected10"] == 1].copy().sort_values("start_frame").reset_index(drop=True)
+        waves = _cycle_waveforms_from_y(signal_array, sel_df, waveform_resample_n)
+        corrs = _corr_to_mean_wave(waves)
+
+        if len(corrs) == len(sel_df):
+            sel_df["wave_corr_to_mean10"] = corrs
+            for _, r in sel_df.iterrows():
+                s0 = int(r["start_frame"]); e0 = int(r["end_frame"])
+                m = (cycles_df["start_frame"] == s0) & (cycles_df["end_frame"] == e0)
+                cycles_df.loc[m, "wave_corr_to_mean10"] = float(r["wave_corr_to_mean10"]) if np.isfinite(r["wave_corr_to_mean10"]) else np.nan
+
+            if np.any(np.isfinite(corrs)):
+                wave_mean_corr_10 = float(np.nanmean(corrs))
+                wave_min_corr_10 = float(np.nanmin(corrs))
+
+        if (n_sel == target_cycles) and (len(corrs) == n_sel) and np.all(np.isfinite(corrs)) and np.all(corrs >= float(waveform_min_corr)):
+            waveform_pass_10 = 1
+        else:
+            waveform_pass_10 = 0
+
+    return waveform_pass_10, wave_mean_corr_10, wave_min_corr_10
 
 
-# =========================
-# main entry point
-# =========================
-
-def run_byebye(argv=None):
+def _build_argparser_byebye() -> argparse.ArgumentParser:
+    """Return the argument parser for the byebye task CLI."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
     ap.add_argument("--pose_model", required=True)
@@ -163,7 +296,68 @@ def run_byebye(argv=None):
     ap.add_argument("--waveform_min_corr", type=float, default=0.75,
                 help="Waveform similarity check: minimum correlation to mean waveform for the selected block (default: 0.75).")
 
-    args = ap.parse_args(argv)
+    return ap
+
+
+# ─── 波形PNG出力 ─────────────────────────────────────────────────────────────
+
+def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
+    """Save waveform png for byebye. Prefer cleaned cycle-signal / index-x so the exported waveform matches lateral byebye motion and reflects outlier processing."""
+    import matplotlib.pyplot as plt
+
+    out_dir = Path(out_dir)
+    stem = out_dir.name
+
+    x = frames_df["time_s"] if "time_s" in frames_df.columns else (
+        frames_df["t_s"] if "t_s" in frames_df.columns else frames_df.get("frame_idx", frames_df.index)
+    )
+
+    # For byebye, the lateral component is the main cycle signal.
+    # Prefer the cleaned/smoothed cycle-signal first, then cleaned index-x, then raw x.
+    if "cycle_signal_smooth_px" in frames_df.columns:
+        y = frames_df["cycle_signal_smooth_px"]
+        ylab = "cycle_signal_smooth_px"
+    elif "cycle_signal_px" in frames_df.columns:
+        y = frames_df["cycle_signal_px"]
+        ylab = "cycle_signal_px"
+    elif "index_x_px_sm" in frames_df.columns:
+        y = frames_df["index_x_px_sm"]
+        ylab = "index_x_px_sm"
+    elif "index_x_px_clean" in frames_df.columns:
+        y = frames_df["index_x_px_clean"]
+        ylab = "index_x_px_clean"
+    elif "index_x_px_raw" in frames_df.columns:
+        y = frames_df["index_x_px_raw"]
+        ylab = "index_x_px_raw"
+    elif "index_x_px_sm_raw" in frames_df.columns:
+        y = frames_df["index_x_px_sm_raw"]
+        ylab = "index_x_px_sm_raw"
+    elif "wrist_x_px_sm" in frames_df.columns:
+        y = frames_df["wrist_x_px_sm"]
+        ylab = "wrist_x_px_sm"
+    elif "wrist_x_px_raw" in frames_df.columns:
+        y = frames_df["wrist_x_px_raw"]
+        ylab = "wrist_x_px_raw"
+    else:
+        y = frames_df.iloc[:, 0]
+        ylab = frames_df.columns[0]
+
+    plt.figure()
+    plt.plot(x, y)
+    plt.xlabel("time_s" if "time_s" in frames_df.columns else "frame_idx")
+    plt.ylabel(ylab)
+    plt.title(stem)
+
+    png = out_dir / f"waveform_{stem}.png"
+    plt.savefig(png, dpi=200, bbox_inches="tight")
+    plt.close()
+    return png
+
+
+# ─── メインエントリポイント ───────────────────────────────────────────────────
+
+def run_byebye(argv: list[str] | None = None) -> None:
+    args = _build_argparser_byebye().parse_args(argv)
 
     video_path = Path(args.video).expanduser()
     out_dir = Path(args.out_dir).expanduser()
@@ -267,11 +461,11 @@ def run_byebye(argv=None):
 
     # onset after cue based on wrist speed
     onset_frame, onset_thr = detect_onset_frame(
-    speed_wrist_smooth,
-    cue_frame=cue,
-    baseline_frames=baseline_frames,
-    k_mad=float(args.onset_k_mad),
-    hold_frames=int(args.onset_hold_frames),
+        speed_wrist_smooth,
+        cue_frame=cue,
+        baseline_frames=baseline_frames,
+        k_mad=float(args.onset_k_mad),
+        hold_frames=int(args.onset_hold_frames),
     )
     start_to_onset_s = float((onset_frame - cue) / float(fps)) if onset_frame is not None else np.nan
 
@@ -279,13 +473,13 @@ def run_byebye(argv=None):
     quiet_frames = int(round(float(args.trim_quiet_s) * float(fps)))
     min_movement_frames = int(round(float(args.trim_min_movement_s) * float(fps)))
     trim_start_frame, trim_end_frame, trim_thr, trim_method = detect_movement_segment(
-    speed_wrist_smooth,
-    cue_frame=cue,
-    baseline_frames=baseline_frames,
-    k_mad=float(args.trim_k_mad),
-    hold_frames=int(args.trim_hold_frames),
-    quiet_frames=quiet_frames,
-    min_movement_frames=min_movement_frames,
+        speed_wrist_smooth,
+        cue_frame=cue,
+        baseline_frames=baseline_frames,
+        k_mad=float(args.trim_k_mad),
+        hold_frames=int(args.trim_hold_frames),
+        quiet_frames=quiet_frames,
+        min_movement_frames=min_movement_frames,
     )
 
     # angles per frame
@@ -314,7 +508,7 @@ def run_byebye(argv=None):
     start_search_frame0 = int(cue + float(args.start_search_sec) * float(fps))
     search_end0 = int(len(sig_smooth_for_peaks) - 1)
 
-    # Cycle search window: defaultはtrim segmentを優先
+    # Cycle search window: default はtrim segmentを優先
     search_start = int(start_search_frame0)
     search_end = int(search_end0)
     cycle_search_used_trim = 0
@@ -325,93 +519,29 @@ def run_byebye(argv=None):
             search_end = min(search_end, int(trim_end_frame))
         cycle_search_used_trim = 1
 
-    detect_attempt_prom_ratio = [
-        float(args.min_prom_ratio),
-        max(0.01, float(args.min_prom_ratio) * 0.85),
-        max(0.01, float(args.min_prom_ratio) * 0.70),
-    ]
-    detect_attempt_prom_px = [
-        float(args.min_prom_px),
-        max(0.0, float(args.min_prom_px) * 0.75),
-        max(0.0, float(args.min_prom_px) * 0.50),
-    ]
-    detect_attempt_amp_px = [
-        float(args.min_amp_px),
-        max(1.0, float(args.min_amp_px) * 0.85),
-        max(1.0, float(args.min_amp_px) * 0.70),
-    ]
-
-    maxima_f, minima_f = [], []
-    cycles_all = []
-    selected_cycles, selected_cv, selected_window_start_idx = [], np.nan, 0
-    best_mean_corr, best_min_corr = np.nan, np.nan
-    detect_attempt_used = 0
-    detect_prom_ratio_used = np.nan
-    detect_prom_px_used = np.nan
-    detect_amp_px_used = np.nan
-
-    if search_end >= search_start:
-        target_n = int(args.target_cycles)
-        best_pack = None
-
-        for att_i, (prom_ratio_i, prom_px_i, amp_px_i) in enumerate(
-            zip(detect_attempt_prom_ratio, detect_attempt_prom_px, detect_attempt_amp_px)
-        ):
-            maxima_i, minima_i = find_local_extrema_prom(
-                sig_smooth_for_peaks,
-                min_sep_frames=min_sep_frames,
-                min_amp_px=float(amp_px_i),
-                min_prom_ratio=float(prom_ratio_i),
-                min_prom_px=float(prom_px_i),
-                prom_win_frames=prom_win_frames,
-            )
-            maxima_f_i = [i for i in maxima_i if search_start <= i <= search_end]
-            minima_f_i = [i for i in minima_i if search_start <= i <= search_end]
-
-            cycles_i = build_cycles_from_extrema(
-                sig_smooth_for_peaks,
-                maxima_f_i,
-                minima_f_i,
-                start_search_frame=search_start,
-                fps=fps,
-                min_cycle_s=float(args.min_cycle_s),
-                max_cycle_s=float(args.max_cycle_s),
-            )
-
-            pack_i = {
-                "maxima_f": maxima_f_i,
-                "minima_f": minima_f_i,
-                "cycles_all": cycles_i,
-                "attempt_used": int(att_i),
-                "prom_ratio_used": float(prom_ratio_i),
-                "prom_px_used": float(prom_px_i),
-                "amp_px_used": float(amp_px_i),
-            }
-
-            if (best_pack is None) or (len(cycles_i) > len(best_pack["cycles_all"])):
-                best_pack = pack_i
-            if target_n > 0 and len(cycles_i) >= target_n:
-                best_pack = pack_i
-                break
-
-        if best_pack is not None:
-            maxima_f = best_pack["maxima_f"]
-            minima_f = best_pack["minima_f"]
-            cycles_all = best_pack["cycles_all"]
-            detect_attempt_used = int(best_pack["attempt_used"])
-            detect_prom_ratio_used = float(best_pack["prom_ratio_used"])
-            detect_prom_px_used = float(best_pack["prom_px_used"])
-            detect_amp_px_used = float(best_pack["amp_px_used"])
-
-        # Select contiguous target_n cycles with minimum CV (teacher advice)
-        if len(cycles_all) >= target_n and target_n > 0:
-            selected_cycles, selected_cv, selected_window_start_idx = select_best_contiguous_cycles_by_cv(
-                cycles_all, fps=fps, target_n=target_n
-            )
-        else:
-            selected_cycles = cycles_all
-            selected_cv = np.nan
-            selected_window_start_idx = 0
+    det = _detect_cycles_byebye(
+        sig_smooth_for_peaks=sig_smooth_for_peaks,
+        fps=fps,
+        search_start=search_start,
+        search_end=search_end,
+        target_n=int(args.target_cycles),
+        min_sep_frames=min_sep_frames,
+        prom_win_frames=prom_win_frames,
+        min_prom_ratio=float(args.min_prom_ratio),
+        min_prom_px=float(args.min_prom_px),
+        min_amp_px=float(args.min_amp_px),
+        min_cycle_s=float(args.min_cycle_s),
+        max_cycle_s=float(args.max_cycle_s),
+    )
+    cycles_all = det["cycles_all"]
+    selected_cycles = det["selected_cycles"]
+    selected_cv = det["selected_cv"]
+    selected_window_start_idx = det["selected_window_start_idx"]
+    detect_attempt_used = det["detect_attempt_used"]
+    detect_prom_ratio_used = det["detect_prom_ratio_used"]
+    detect_prom_px_used = det["detect_prom_px_used"]
+    detect_amp_px_used = det["detect_amp_px_used"]
+    best_mean_corr, best_min_corr = np.nan, np.nan  # byebye uses CV-only selection
 
     # -------------------------
     # frames.csv (always saved)
@@ -513,7 +643,7 @@ def run_byebye(argv=None):
         seg_sig = np.asarray(sig_smooth[s0:e0+1], dtype=float)
         amp_px = float(np.nanmax(seg_sig) - np.nanmin(seg_sig)) if np.any(~np.isnan(seg_sig)) else np.nan
 
-        row = {
+        row: dict[str, Any] = {
             "cycle_id_detected": int(c.get("cycle_id", 0)),
             "start_frame": s0,
             "opp_frame": mid,
@@ -557,7 +687,6 @@ def run_byebye(argv=None):
         cycles_df = cycles_df.sort_values("start_frame").reset_index(drop=True)
         cycles_df.insert(0, "cycle_id", np.arange(1, len(cycles_df) + 1, dtype=int))
     else:
-        # keep stable header even when no cycles
         cycles_df = pd.DataFrame(columns=[
             "cycle_id","cycle_id_detected","start_frame","opp_frame","end_frame",
             "start_time_s","opp_time_s","end_time_s","cycle_time_s","amp_px",
@@ -572,58 +701,26 @@ def run_byebye(argv=None):
     # Waveform similarity check for the selected block (typically 10 cycles)
     # -------------------------
     n_sel = int((cycles_df.get("selected10", 0) == 1).sum()) if len(cycles_df) > 0 else 0
-    waveform_pass_10 = 0
-    wave_mean_corr_10 = np.nan
-    wave_min_corr_10 = np.nan
-
-    if n_sel > 0 and len(cycles_df) > 0:
-        sel_df = cycles_df[cycles_df["selected10"] == 1].copy().sort_values("start_frame").reset_index(drop=True)
-        waves = _cycle_waveforms_from_y(frames["cycle_signal_smooth_px"].to_numpy(dtype=float), sel_df, int(args.waveform_resample_n))
-        corrs = _corr_to_mean_wave(waves)
-
-        if len(corrs) == len(sel_df):
-            sel_df["wave_corr_to_mean10"] = corrs
-
-            # write back
-            for _, r in sel_df.iterrows():
-                s0 = int(r["start_frame"]); e0 = int(r["end_frame"])
-                m = (cycles_df["start_frame"] == s0) & (cycles_df["end_frame"] == e0)
-                cycles_df.loc[m, "wave_corr_to_mean10"] = float(r["wave_corr_to_mean10"]) if np.isfinite(r["wave_corr_to_mean10"]) else np.nan
-
-            if np.any(np.isfinite(corrs)):
-                wave_mean_corr_10 = float(np.nanmean(corrs))
-                wave_min_corr_10 = float(np.nanmin(corrs))
-
-        # pass definition: (exactly target_cycles selected) AND (all corrs >= threshold)
-        if (n_sel == int(args.target_cycles)) and (len(corrs) == n_sel) and np.all(np.isfinite(corrs)) and np.all(corrs >= float(args.waveform_min_corr)):
-            waveform_pass_10 = 1
-        else:
-            waveform_pass_10 = 0
+    waveform_pass_10, wave_mean_corr_10, wave_min_corr_10 = _compute_waveform_qc(
+        cycles_df=cycles_df,
+        signal_array=frames["cycle_signal_smooth_px"].to_numpy(dtype=float),
+        waveform_resample_n=int(args.waveform_resample_n),
+        waveform_min_corr=float(args.waveform_min_corr),
+        target_cycles=int(args.target_cycles),
+    )
 
     # -------------------------
     # summary.csv (always saved)
     # -------------------------
-    def _cycle_time_stats(df_: pd.DataFrame) -> tuple:
-        if df_ is None or len(df_) == 0 or "cycle_time_s" not in df_.columns:
-            return np.nan, np.nan, np.nan
-        t = df_["cycle_time_s"].to_numpy(dtype=float)
-        if not np.any(np.isfinite(t)):
-            return np.nan, np.nan, np.nan
-        t_mean = float(np.nanmean(t))
-        t_sd = float(np.nanstd(t, ddof=1)) if np.sum(np.isfinite(t)) >= 2 else np.nan
-        cv = float(t_sd / t_mean) if (np.isfinite(t_sd) and t_mean != 0) else np.nan
-        return t_mean, t_sd, cv
-
     sel_block_df = cycles_df[cycles_df["selected10"] == 1].copy() if ("selected10" in cycles_df.columns) else pd.DataFrame()
     t_mean_sel, t_sd_sel, rhythm_cv_sel = _cycle_time_stats(sel_block_df)
     t_mean_all, t_sd_all, rhythm_cv_all = _cycle_time_stats(cycles_df)
-    # outlier summary
     _out_n = int(np.sum(outlier_flag == 1))
     _reasons = pd.Series(outlier_reason).astype(str)
     _out_n_jump = int(_reasons.str.contains("jump", regex=False).sum())
     _out_n_hand_pose = int(_reasons.str.contains("hand_pose", regex=False).sum())
 
-    meta = {
+    meta: dict[str, Any] = {
         "participant_id": args.participant_id,
         "condition": args.condition,
         "set_id": int(args.set_id),
@@ -666,7 +763,6 @@ def run_byebye(argv=None):
         "onset_frame": int(onset_frame) if onset_frame is not None else np.nan,
         "onset_thr_px_s": float(onset_thr) if np.isfinite(onset_thr) else np.nan,
 
-        # cycle time summary
         "cycle_time_mean_s_selected10": t_mean_sel,
         "cycle_time_sd_s_selected10": t_sd_sel,
         "rhythm_cv_selected10": rhythm_cv_sel,
@@ -674,7 +770,6 @@ def run_byebye(argv=None):
         "cycle_time_sd_s_all": t_sd_all,
         "rhythm_cv_all": rhythm_cv_all,
 
-        # waveform similarity QC for selected block
         "waveform_resample_n": int(args.waveform_resample_n),
         "waveform_min_corr_th": float(args.waveform_min_corr),
         "waveform_mean_corr_10": wave_mean_corr_10,
@@ -682,23 +777,10 @@ def run_byebye(argv=None):
         "waveform_pass_10": int(waveform_pass_10),
     }
 
-    # add means over selected block if available, else over all cycles
-    def _add_means(prefix: str, df_: pd.DataFrame):
-        if df_ is None or len(df_) == 0:
-            return
-        for k in [
-            "area_px2", "x_range_px", "y_range_px", "traj_len_px", "max_speed_px_s",
-            "dist_range_px", "plane_deg",
-            "shoulder_deg_range", "elbow_deg_range", "wrist_deg_range", "index_mcp_deg_range",
-            "shoulder_deg_mean", "elbow_deg_mean", "wrist_deg_mean", "index_mcp_deg_mean",
-        ]:
-            if k in df_.columns:
-                meta[f"{prefix}{k}_mean_over_cycles"] = float(np.nanmean(df_[k].to_numpy(dtype=float)))
-
     if n_sel > 0:
-        _add_means("selected10_", sel_block_df)
+        _add_cycle_means(meta, "selected10_", sel_block_df)
     else:
-        _add_means("all_", cycles_df)
+        _add_cycle_means(meta, "all_", cycles_df)
 
     summary_df = pd.DataFrame([meta])
 
@@ -711,7 +793,6 @@ def run_byebye(argv=None):
 
     png = save_waveform_png(frames, out_dir)
 
-    # QC print (similar to hammer)
     n_det = int(len(cycles_df))
     target = int(args.target_cycles)
     pass10 = int(waveform_pass_10)

@@ -9,6 +9,7 @@ byebye / comehere タスクで共通して使う数学・信号処理ユーテ�
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -18,7 +19,11 @@ import pandas as pd
 # 基本数学ヘルパー
 # =========================
 
-def angle_deg(ax, ay, bx, by, cx, cy):
+def angle_deg(
+    ax: float, ay: float,
+    bx: float, by: float,
+    cx: float, cy: float,
+) -> float:
     """Angle ABC in degrees. Returns NaN if any point is missing."""
     pts = [ax, ay, bx, by, cx, cy]
     if any(pd.isna(v) for v in pts):
@@ -33,7 +38,7 @@ def angle_deg(ax, ay, bx, by, cx, cy):
     return math.degrees(math.acos(cosv))
 
 
-def pca_plane_deg(x, y):
+def pca_plane_deg(x: np.ndarray, y: np.ndarray) -> float:
     """Principal direction angle (deg) of trajectory in 2D."""
     xy = np.column_stack([x, y]).astype(float)
     xy = xy[~np.isnan(xy).any(axis=1)]
@@ -46,7 +51,8 @@ def pca_plane_deg(x, y):
     return float(math.degrees(math.atan2(pc[1], pc[0])))
 
 
-def traj_len_px(x, y):
+def traj_len_px(x: np.ndarray, y: np.ndarray) -> float:
+    """Total trajectory length in pixels (NaN-safe)."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     m = ~np.isnan(x) & ~np.isnan(y)
@@ -57,7 +63,8 @@ def traj_len_px(x, y):
     return float(np.nansum(np.hypot(dx, dy)))
 
 
-def max_speed_px_s(x, y, fps):
+def max_speed_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> float:
+    """Maximum frame-to-frame speed in px/s (NaN-safe)."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     m = ~np.isnan(x) & ~np.isnan(y)
@@ -69,12 +76,13 @@ def max_speed_px_s(x, y, fps):
     return float(np.nanmax(v)) if len(v) else np.nan
 
 
-def rolling_mean(x, win):
+def rolling_mean(x: np.ndarray, win: int) -> np.ndarray:
+    """Centred rolling mean with min_periods=1 (NaN-safe)."""
     s = pd.Series(x, dtype="float64")
     return s.rolling(int(win), center=True, min_periods=1).mean().to_numpy()
 
 
-def speed_series_px_s(x, y, fps):
+def speed_series_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> np.ndarray:
     """Per-frame speed (px/s) aligned to frame indices. speed[0] is NaN."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
@@ -89,6 +97,7 @@ def speed_series_px_s(x, y, fps):
 
 
 def _odd(n: int) -> int:
+    """Return n if odd, n+1 if even. Minimum value is 1."""
     n = int(max(1, n))
     return n if (n % 2 == 1) else (n + 1)
 
@@ -97,7 +106,8 @@ def _odd(n: int) -> int:
 # 外れ値処理ヘルパー
 # =========================
 
-def _as_str_array(a):
+def _as_str_array(a: Any) -> np.ndarray:
+    """Convert any array-like to a numpy object array of strings."""
     if a is None:
         return np.array([], dtype=object)
     s = pd.Series(a).astype(str).to_numpy(dtype=object)
@@ -114,7 +124,7 @@ def detect_index_outliers(
     hand_ix_y: np.ndarray,
     jump_px: float = 200.0,
     hand_pose_dist_px: float = 150.0,
-):
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Detect outliers in representative index (x,y) series.
 
     Outlier rules:
@@ -175,7 +185,12 @@ def _interpolate_with_gap_limit(arr: np.ndarray, max_gap_frames: int) -> np.ndar
     return s.to_numpy(dtype=float)
 
 
-def apply_outlier_cleaning_2d(ix_raw: np.ndarray, iy_raw: np.ndarray, outlier_flag: np.ndarray, max_gap_frames: int):
+def apply_outlier_cleaning_2d(
+    ix_raw: np.ndarray,
+    iy_raw: np.ndarray,
+    outlier_flag: np.ndarray,
+    max_gap_frames: int,
+) -> tuple[np.ndarray, np.ndarray]:
     """Replace outlier frames with NaN, then interpolate (limited gap) for x and y."""
     ix = np.asarray(ix_raw, dtype=float).copy()
     iy = np.asarray(iy_raw, dtype=float).copy()
@@ -191,11 +206,17 @@ def apply_outlier_cleaning_2d(ix_raw: np.ndarray, iy_raw: np.ndarray, outlier_fl
 # 動作開始・区間検出
 # =========================
 
-def detect_onset_frame(speed_px_s_arr, cue_frame, baseline_frames, k_mad=3.0, hold_frames=5):
-    """
-    Detect movement onset after cue_frame using baseline median + k*MAD threshold.
+def detect_onset_frame(
+    speed_px_s_arr: np.ndarray,
+    cue_frame: int,
+    baseline_frames: int,
+    k_mad: float = 3.0,
+    hold_frames: int = 5,
+) -> tuple[int | None, float]:
+    """Detect movement onset after cue_frame using baseline median + k*MAD threshold.
 
     Baseline: prefer immediately BEFORE cue_frame if possible, else AFTER cue_frame.
+    Returns (onset_frame_index_or_None, threshold_px_s).
     """
     speed = np.asarray(speed_px_s_arr, dtype=float)
     n = len(speed)
@@ -233,14 +254,19 @@ def detect_onset_frame(speed_px_s_arr, cue_frame, baseline_frames, k_mad=3.0, ho
     return None, float(thr)
 
 
-def detect_movement_segment(speed_px_s_arr, cue_frame, baseline_frames,
-                            k_mad=3.0, hold_frames=5,
-                            quiet_frames=15, min_movement_frames=15):
-    """
-    Detect movement segment [start_frame, end_frame] using per-frame speed (px/s).
+def detect_movement_segment(
+    speed_px_s_arr: np.ndarray,
+    cue_frame: int,
+    baseline_frames: int,
+    k_mad: float = 3.0,
+    hold_frames: int = 5,
+    quiet_frames: int = 15,
+    min_movement_frames: int = 15,
+) -> tuple[int | None, int | None, float, str]:
+    """Detect movement segment [start_frame, end_frame] using per-frame speed (px/s).
 
-    Returns (start_frame, end_frame, thr, method)
-      method: 'quiet' (end found by quiet period) or 'last_above_thr'
+    Returns (start_frame, end_frame, threshold_px_s, method).
+    method: 'quiet' (end found by quiet period) or 'last_above_thr'.
     """
     speed = np.asarray(speed_px_s_arr, dtype=float)
     n = len(speed)
@@ -305,11 +331,14 @@ def detect_movement_segment(speed_px_s_arr, cue_frame, baseline_frames,
     return start_frame, last, float(thr), "last_above_thr"
 
 
-def select_best_contiguous_cycles_by_cv(cycles, fps, target_n=10):
-    """
-    Select a contiguous window of target_n cycles whose cycle_time_s CV is minimal.
-    Returns (selected_cycles, best_cv, window_start_index).
+def select_best_contiguous_cycles_by_cv(
+    cycles: list[dict],
+    fps: float,
+    target_n: int = 10,
+) -> tuple[list[dict], float, int]:
+    """Select a contiguous window of target_n cycles whose cycle_time_s CV is minimal.
 
+    Returns (selected_cycles, best_cv, window_start_index).
     If len(cycles) < target_n, returns (cycles, NaN, 0).
     """
     cycles = list(cycles) if cycles is not None else []
@@ -346,10 +375,15 @@ def select_best_contiguous_cycles_by_cv(cycles, fps, target_n=10):
 # サイクル検出
 # =========================
 
-def find_local_extrema_prom(x, min_sep_frames=6, min_amp_px=20.0,
-                            min_prom_ratio=0.15, min_prom_px=0.0, prom_win_frames=15):
-    """
-    Return (maxima_idx, minima_idx) for a smoothed series x, with:
+def find_local_extrema_prom(
+    x: np.ndarray,
+    min_sep_frames: int = 6,
+    min_amp_px: float = 20.0,
+    min_prom_ratio: float = 0.15,
+    min_prom_px: float = 0.0,
+    prom_win_frames: int = 15,
+) -> tuple[list[int], list[int]]:
+    """Return (maxima_idx, minima_idx) for a smoothed series x, with:
       - local extremum rule
       - minimum separation (frames)
       - global amplitude floor (min_amp_px)
@@ -359,7 +393,8 @@ def find_local_extrema_prom(x, min_sep_frames=6, min_amp_px=20.0,
     """
     x = np.asarray(x, dtype=float)
     n = len(x)
-    maxima, minima = [], []
+    maxima: list[int] = []
+    minima: list[int] = []
     last_max = -10**9
     last_min = -10**9
 
@@ -413,14 +448,21 @@ def find_local_extrema_prom(x, min_sep_frames=6, min_amp_px=20.0,
     return maxima, minima
 
 
-def build_cycles_from_extrema(x_smooth, maxima, minima,
-                              start_search_frame, fps,
-                              min_cycle_s=0.3, max_cycle_s=3.0):
-    """
+def build_cycles_from_extrema(
+    x_smooth: np.ndarray,
+    maxima: list[int],
+    minima: list[int],
+    start_search_frame: int,
+    fps: float,
+    min_cycle_s: float = 0.3,
+    max_cycle_s: float = 3.0,
+) -> list[dict]:
+    """Build cycle list from detected extrema.
+
     Cycle definition:
       If first extremum after start_search_frame is MAX:  max -> min -> next max
       If first extremum after start_search_frame is MIN:  min -> max -> next min
-    Returns list of dict: {cycle_id, start_frame, opp_frame, end_frame}
+    Returns list of dict: {cycle_id, start_frame, opp_frame, end_frame}.
     """
     x_smooth = np.asarray(x_smooth, dtype=float)
     start_search = int(start_search_frame)
@@ -432,7 +474,7 @@ def build_cycles_from_extrema(x_smooth, maxima, minima,
         return []
 
     start_kind = ext[0][1]  # "max" or "min"
-    cycles = []
+    cycles: list[dict] = []
     cid = 1
 
     if start_kind == "max":
@@ -474,6 +516,7 @@ def build_cycles_from_extrema(x_smooth, maxima, minima,
 # =========================
 
 def _resample_1d_nan(arr: np.ndarray, n: int) -> np.ndarray:
+    """Resample a 1D array to n points using linear interpolation (NaN-safe)."""
     a = np.asarray(arr, dtype=float)
     n = int(n)
     if n <= 1:
@@ -489,7 +532,11 @@ def _resample_1d_nan(arr: np.ndarray, n: int) -> np.ndarray:
     return y_new.astype(float)
 
 
-def _cycle_waveforms_from_y(y_sm: np.ndarray, cycles_df: pd.DataFrame, resample_n: int) -> np.ndarray:
+def _cycle_waveforms_from_y(
+    y_sm: np.ndarray,
+    cycles_df: pd.DataFrame,
+    resample_n: int,
+) -> np.ndarray:
     """Return (n_cycles, resample_n) matrix of per-cycle waveforms from y_sm."""
     y_sm = np.asarray(y_sm, dtype=float)
     resample_n = int(resample_n)
@@ -540,6 +587,7 @@ def _corr_to_mean_wave(waves: np.ndarray) -> np.ndarray:
 
 
 def _block_wave_stats(waves_block: np.ndarray) -> tuple[float, float]:
+    """Mean and min correlation of waveforms to their mean waveform."""
     corrs = _corr_to_mean_wave(waves_block)
     if np.isfinite(corrs).any():
         return float(np.nanmean(corrs)), float(np.nanmin(corrs))
@@ -551,7 +599,10 @@ def _best_contiguous_block_by_waveform_then_cv(
     waveforms: np.ndarray,
     target: int,
 ) -> tuple[int, float, float, float]:
-    """Hammerと同様: mean_corr最大を優先し、同等ならCV最小。waveformsが無効ならCV最小。"""
+    """Select best contiguous block prioritising mean waveform correlation, then CV.
+
+    Returns (best_start_index, best_cv, best_mean_corr, best_min_corr).
+    """
     t = np.asarray(cycle_times, dtype=float)
     n = int(len(t))
     target = int(target)

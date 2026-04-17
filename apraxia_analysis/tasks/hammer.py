@@ -5,6 +5,20 @@
 hammer タスク固有の解析ロジック。
 計算ロジック・型変換・NaN 判定順序はオリジナルスクリプトから変更していない。
 Hammer は Pose のみ使用するため、抽出・数学ユーティリティは自己完結している。
+
+【設計上の注意】
+  下記ユーティリティ関数は core/math_utils.py に類似関数が存在するが、
+  シグネチャや実装の細部が hammer 固有のため、出力の再現性を保証するため
+  意図的にここで独立定義している。共通化を行う際は必ず出力値を照合すること。
+
+  関数                    | core/ との相違点
+  -----------------------|------------------------------------------------
+  _odd()                 | max(3, n) を使用。core は max(1, n)
+  angle_deg()            | 引数が Tuple[float,float] x3。core は float x6
+  _interpolate_small_gaps| ループベースの補間。core は pandas.interpolate
+  _rolling_mean()        | win<=1 のガード付き。core に同等品あり
+  _corr_to_mean_wave()   | ドット積で相関計算。core は np.corrcoef
+  _cycle_waveforms_from_y| start_i/end_i 列を使用。core は start_frame/end_frame
 """
 
 from __future__ import annotations
@@ -13,33 +27,36 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
-from typing import Dict, Tuple, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 
 
-# -------------------------
-#  hammer_metrics (embedded)
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+#  Hammer 固有ユーティリティ
+#  （core/math_utils.py との違いは上記モジュール docstring を参照）
+# ─────────────────────────────────────────────────────────────────────────────
 
 def _odd(n: int) -> int:
+    """Return n if odd, n+1 if even. Minimum value is 3 (hammer-specific)."""
     n = int(max(3, n))
     return n if (n % 2 == 1) else n + 1
 
 
-def angle_deg(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> float:
-    """Angle ABC in degrees. Returns NaN if any point is missing."""
+def angle_deg(
+    a: Tuple[float, float],
+    b: Tuple[float, float],
+    c: Tuple[float, float],
+) -> float:
+    """Angle ABC in degrees. Takes three (x, y) tuples. Returns NaN if any point is missing."""
     ax, ay = a
     bx, by = b
     cx, cy = c
     if not (
-        np.isfinite(ax)
-        and np.isfinite(ay)
-        and np.isfinite(bx)
-        and np.isfinite(by)
-        and np.isfinite(cx)
-        and np.isfinite(cy)
+        np.isfinite(ax) and np.isfinite(ay)
+        and np.isfinite(bx) and np.isfinite(by)
+        and np.isfinite(cx) and np.isfinite(cy)
     ):
         return float("nan")
     v1x, v1y = ax - bx, ay - by
@@ -52,8 +69,14 @@ def angle_deg(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, fl
     return math.degrees(math.acos(cosang))
 
 
-def _interpolate_small_gaps(s: pd.Series, max_gap: int) -> tuple[pd.Series, pd.Series]:
-    """Interpolate NaN runs up to max_gap frames. Returns (filled, interpolated_flag)."""
+def _interpolate_small_gaps(
+    s: pd.Series,
+    max_gap: int,
+) -> tuple[pd.Series, pd.Series]:
+    """Interpolate NaN runs up to max_gap frames. Returns (filled, interpolated_flag).
+
+    Loop-based implementation to preserve exact interpolation behaviour.
+    """
     x = s.astype(float).copy()
     interp_flag = pd.Series(np.zeros(len(x), dtype=int), index=x.index)
 
@@ -82,14 +105,19 @@ def _interpolate_small_gaps(s: pd.Series, max_gap: int) -> tuple[pd.Series, pd.S
 
 
 def _rolling_mean(x: np.ndarray, win: int) -> np.ndarray:
+    """Centred rolling mean. Short-circuits when win <= 1."""
     if win <= 1:
         return x.astype(float)
     s = pd.Series(x.astype(float))
     return s.rolling(window=win, center=True, min_periods=1).mean().to_numpy(dtype=float)
 
 
-def _find_peaks_safely(y: np.ndarray, distance: int, prominence: float) -> np.ndarray:
-    """Try scipy.signal.find_peaks; otherwise use a lightweight local-extrema detector."""
+def _find_peaks_safely(
+    y: np.ndarray,
+    distance: int,
+    prominence: float,
+) -> np.ndarray:
+    """Try scipy.signal.find_peaks; fall back to a lightweight local-extrema detector."""
     y = np.asarray(y, dtype=float)
     if len(y) < 3:
         return np.array([], dtype=int)
@@ -102,7 +130,7 @@ def _find_peaks_safely(y: np.ndarray, distance: int, prominence: float) -> np.nd
         )
         return peaks.astype(int)
     except Exception:
-        peaks: List[int] = []
+        peaks_list: List[int] = []
         last = -10**9
         for i in range(1, len(y) - 1):
             if i - last < max(1, int(distance)):
@@ -114,13 +142,16 @@ def _find_peaks_safely(y: np.ndarray, distance: int, prominence: float) -> np.nd
                 hi = np.nanmin(y[i : min(len(y), i + distance + 1)])
                 prom_est = y[i] - max(lo, hi)
                 if np.isfinite(prom_est) and prom_est >= prominence:
-                    peaks.append(i)
+                    peaks_list.append(i)
                     last = i
-        return np.array(peaks, dtype=int)
+        return np.array(peaks_list, dtype=int)
 
 
 def _detect_motion_window(
-    speed: np.ndarray, wrist_valid: np.ndarray, fps: float, cfg: "HammerConfig"
+    speed: np.ndarray,
+    wrist_valid: np.ndarray,
+    fps: float,
+    cfg: "HammerConfig",
 ) -> tuple[int, int, float]:
     """Detect the active motion window [start_i, end_i] using wrist speed."""
     n = int(len(speed))
@@ -158,6 +189,7 @@ def _detect_motion_window(
 
 
 def _resample_1d_nan(arr: np.ndarray, n: int) -> np.ndarray:
+    """Resample 1D array to n points via linear interpolation (NaN-safe)."""
     a = np.asarray(arr, dtype=float)
     if n <= 1:
         return np.array([float(np.nanmean(a))]) if np.isfinite(a).any() else np.array([np.nan])
@@ -172,7 +204,15 @@ def _resample_1d_nan(arr: np.ndarray, n: int) -> np.ndarray:
     return y_new.astype(float)
 
 
-def _cycle_waveforms_from_y(y_sm: np.ndarray, cycles_df: pd.DataFrame, resample_n: int) -> np.ndarray:
+def _cycle_waveforms_from_y(
+    y_sm: np.ndarray,
+    cycles_df: pd.DataFrame,
+    resample_n: int,
+) -> np.ndarray:
+    """Return (n_cycles, resample_n) waveform matrix.
+
+    Uses start_i / end_i columns (hammer-specific, unlike core which uses start_frame/end_frame).
+    """
     mats: List[np.ndarray] = []
     if cycles_df is None or len(cycles_df) == 0:
         return np.empty((0, int(resample_n)), dtype=float)
@@ -195,6 +235,11 @@ def _cycle_waveforms_from_y(y_sm: np.ndarray, cycles_df: pd.DataFrame, resample_
 
 
 def _corr_to_mean_wave(waves: np.ndarray) -> np.ndarray:
+    """Correlation of each waveform to the mean waveform.
+
+    Uses dot-product formula (hammer-specific; core uses np.corrcoef).
+    Both are mathematically equivalent Pearson r.
+    """
     w = np.asarray(waves, dtype=float)
     if w.ndim != 2 or w.size == 0:
         return np.array([], dtype=float)
@@ -225,16 +270,24 @@ def _corr_to_mean_wave(waves: np.ndarray) -> np.ndarray:
 
 
 def _block_wave_stats(waves_block: np.ndarray) -> tuple[float, float]:
+    """Mean and min correlation of waveforms to their mean waveform."""
     corrs = _corr_to_mean_wave(waves_block)
     if np.isfinite(corrs).any():
         return float(np.nanmean(corrs)), float(np.nanmin(corrs))
     return float("nan"), float("nan")
 
 
-def select_best_contiguous_cycles_by_cv(cycle_times: np.ndarray, target: int) -> tuple[int, float]:
+def select_best_contiguous_cycles_by_cv(
+    cycle_times: np.ndarray,
+    target: int,
+) -> tuple[int, float]:
     """Select a contiguous block whose cycle-time CV is minimal.
 
-    Returns (best_start_index, best_cv). If len(cycle_times) < target, returns (0, NaN).
+    Returns (best_start_index, best_cv).
+    If len(cycle_times) < target, returns (0, NaN).
+
+    Note: takes a flat np.ndarray of cycle durations (different from core's version
+    which takes a list[dict] and fps).
     """
     t = np.asarray(cycle_times, dtype=float)
     n = int(len(t))
@@ -268,6 +321,10 @@ def _best_contiguous_block_by_waveform_then_cv(
     waveforms: np.ndarray,
     target: int,
 ) -> tuple[int, float, float, float]:
+    """Select best block: prioritise mean waveform correlation, then CV.
+
+    Returns (best_start_index, best_cv, best_mean_corr, best_min_corr).
+    """
     t = np.asarray(cycle_times, dtype=float)
     n = int(len(t))
     if target <= 0 or n < target:
@@ -309,6 +366,10 @@ def _best_contiguous_block_by_waveform_then_cv(
     return int(best_i), float(best_cv), float(best_mean_corr), float(best_min_corr)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  設定クラス
+# ─────────────────────────────────────────────────────────────────────────────
+
 @dataclass
 class HammerConfig:
     fps: float
@@ -341,7 +402,19 @@ class HammerConfig:
     use_cycles_to: int = 8
 
 
-def process_hammer_trial(raw_df: pd.DataFrame, cfg: HammerConfig, meta: Dict) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+# ─────────────────────────────────────────────────────────────────────────────
+#  解析コア
+# ─────────────────────────────────────────────────────────────────────────────
+
+def process_hammer_trial(
+    raw_df: pd.DataFrame,
+    cfg: HammerConfig,
+    meta: Dict,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Run full hammer analysis on a single trial.
+
+    Returns (frames_df, cycles_df, summary_df).
+    """
     fps = float(cfg.fps) if cfg.fps and cfg.fps > 0 else 30.0
 
     df = raw_df.copy()
@@ -443,7 +516,10 @@ def process_hammer_trial(raw_df: pd.DataFrame, cfg: HammerConfig, meta: Dict) ->
 
     target = int(getattr(cfg, "target_cycles", 10))
 
-    def _build_cycles_from_peaks(up_peaks_abs: np.ndarray, min_amp_y_local: float):
+    def _build_cycles_from_peaks(
+        up_peaks_abs: np.ndarray,
+        min_amp_y_local: float,
+    ) -> tuple[List[Dict], np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         cycles_local: List[Dict] = []
         is_upper_local = np.zeros(len(df), dtype=int)
         is_lower_local = np.zeros(len(df), dtype=int)
@@ -556,7 +632,11 @@ def process_hammer_trial(raw_df: pd.DataFrame, cfg: HammerConfig, meta: Dict) ->
 
         return cycles_local, is_upper_local, is_lower_local, cycle_id_per_frame_local, is_cycle_start_local
 
-    def _detect_once(prom_local: float, min_amp_y_local: float, extra_pad_frames: int = 0):
+    def _detect_once(
+        prom_local: float,
+        min_amp_y_local: float,
+        extra_pad_frames: int = 0,
+    ) -> tuple:
         w0_local = max(0, int(w0) - int(extra_pad_frames))
         w1_local = min(len(df) - 1, int(w1) + int(extra_pad_frames))
         sig_local = -y_sm[w0_local : w1_local + 1]
@@ -790,30 +870,22 @@ def process_hammer_trial(raw_df: pd.DataFrame, cfg: HammerConfig, meta: Dict) ->
     return frames_df, cycles_df, summary_df
 
 
-# -------------------------
-#  MediaPipe video ingest
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+#  MediaPipe 動画からの座標抽出
+# ─────────────────────────────────────────────────────────────────────────────
 
-POSE_LM = {
+POSE_LM: Dict[str, Dict[str, int]] = {
     "Left": {
-        "hip": 23,
-        "shoulder": 11,
-        "elbow": 13,
-        "wrist": 15,
-        "index": 19,
+        "hip": 23, "shoulder": 11, "elbow": 13, "wrist": 15, "index": 19,
     },
     "Right": {
-        "hip": 24,
-        "shoulder": 12,
-        "elbow": 14,
-        "wrist": 16,
-        "index": 20,
+        "hip": 24, "shoulder": 12, "elbow": 14, "wrist": 16, "index": 20,
     },
 }
 
 
-def _lm_score(lm) -> float:
-    # mediapipe NormalizedLandmark has presence/visibility depending on version
+def _lm_score(lm: object) -> float:
+    """Extract presence/visibility score from a MediaPipe landmark."""
     if lm is None:
         return 0.0
     if hasattr(lm, "presence") and lm.presence is not None:
@@ -829,8 +901,13 @@ def _lm_score(lm) -> float:
     return 1.0
 
 
-def extract_pose_px_from_video(video_path: Path, pose_model: Path, side: str, presence_th: float) -> tuple[pd.DataFrame, float, str]:
-    """Extract minimal landmark pixel coords per frame.
+def extract_pose_px_from_video(
+    video_path: Path,
+    pose_model: Path,
+    side: str,
+    presence_th: float,
+) -> tuple[pd.DataFrame, float, str]:
+    """Extract minimal landmark pixel coords per frame using MediaPipe Pose.
 
     Returns (raw_df, src_fps, video_file).
     """
@@ -866,7 +943,7 @@ def extract_pose_px_from_video(video_path: Path, pose_model: Path, side: str, pr
         ok, frame_bgr = cap.read()
         if not ok:
             break
-        # BGR->RGB
+        # BGR -> RGB
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         ts_ms = int(round((frame_idx / fps) * 1000.0))
@@ -930,11 +1007,12 @@ def extract_pose_px_from_video(video_path: Path, pose_model: Path, side: str, pr
     return raw_df, fps, str(video_path)
 
 
-# -------------------------
-#  waveform export
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
+#  波形 PNG 出力
+# ─────────────────────────────────────────────────────────────────────────────
 
 def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
+    """Save wrist-y waveform as a PNG file."""
     import matplotlib.pyplot as plt
 
     out_dir = Path(out_dir)
@@ -963,11 +1041,12 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     return png
 
 
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 #  CLI
-# -------------------------
+# ─────────────────────────────────────────────────────────────────────────────
 
 def build_argparser() -> argparse.ArgumentParser:
+    """Build the argument parser for the hammer task CLI."""
     p = argparse.ArgumentParser()
     p.add_argument("--video", required=True, help="入力MOV/MP4")
     p.add_argument("--pose_model", required=True, help="pose_landmarker_full.task などの .task へのパス")
@@ -989,61 +1068,30 @@ def build_argparser() -> argparse.ArgumentParser:
 
     p.add_argument("--target_cycles", type=int, default=10, help="最終的に採用する連続サイクル数 (default: 10)")
 
-    p.add_argument(
-        "--motion_speed_th_frac",
-        type=float,
-        default=0.15,
-        help="動作区間検出: speed閾値 = frac * P95(speed)",
-    )
-    p.add_argument(
-        "--motion_min_active_s",
-        type=float,
-        default=0.30,
-        help="動作区間検出: 最小連続活動時間 (秒)",
-    )
-    p.add_argument(
-        "--motion_pad_s",
-        type=float,
-        default=0.40,
-        help="動作区間検出: 前後に足す余白 (秒)",
-    )
+    p.add_argument("--motion_speed_th_frac", type=float, default=0.15,
+                   help="動作区間検出: speed閾値 = frac * P95(speed)")
+    p.add_argument("--motion_min_active_s", type=float, default=0.30,
+                   help="動作区間検出: 最小連続活動時間 (秒)")
+    p.add_argument("--motion_pad_s", type=float, default=0.40,
+                   help="動作区間検出: 前後に足す余白 (秒)")
 
-    p.add_argument(
-        "--peak_prom_frac",
-        type=float,
-        default=0.12,
-        help="ピーク検出: prominence = frac * (P95-P5) を使用",
-    )
-    p.add_argument(
-        "--peak_prom_min_abs",
-        type=float,
-        default=5.0,
-        help="ピーク検出: prominenceの最小値 (px)",
-    )
-    p.add_argument(
-        "--cycle_amp_frac",
-        type=float,
-        default=0.15,
-        help="偽サイクル除外: min_amp_y = frac * (P95(y)-P5(y))",
-    )
+    p.add_argument("--peak_prom_frac", type=float, default=0.12,
+                   help="ピーク検出: prominence = frac * (P95-P5) を使用")
+    p.add_argument("--peak_prom_min_abs", type=float, default=5.0,
+                   help="ピーク検出: prominenceの最小値 (px)")
+    p.add_argument("--cycle_amp_frac", type=float, default=0.15,
+                   help="偽サイクル除外: min_amp_y = frac * (P95(y)-P5(y))")
 
-    p.add_argument(
-        "--waveform_resample_n",
-        type=int,
-        default=100,
-        help="同一波形チェック: 1サイクル波形をこの点数に正規化して相関を計算 (default: 100)",
-    )
-    p.add_argument(
-        "--waveform_min_corr",
-        type=float,
-        default=0.75,
-        help="同一波形チェック: 相関の最低許容値 (default: 0.75)",
-    )
+    p.add_argument("--waveform_resample_n", type=int, default=100,
+                   help="同一波形チェック: 1サイクル波形をこの点数に正規化して相関を計算 (default: 100)")
+    p.add_argument("--waveform_min_corr", type=float, default=0.75,
+                   help="同一波形チェック: 相関の最低許容値 (default: 0.75)")
 
     return p
 
 
-def run_hammer(argv=None) -> int:
+def run_hammer(argv: list[str] | None = None) -> int:
+    """CLI entry point for the hammer task."""
     args = build_argparser().parse_args(argv)
 
     video = Path(args.video)
