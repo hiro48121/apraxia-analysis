@@ -65,14 +65,14 @@ def extract_pose_hand_px_from_video(
 
     pose_idx = _pose_side_indices(side)
 
-    # macOS 新バージョンで GPU 初期化・VIDEO モードがハングする問題を回避するため
-    # CPU delegate + IMAGE モードを使用する。
+    # macOS 新バージョンで GPU 初期化がハングする問題を回避するため CPU を明示指定する。
+    # VIDEO モードを維持することで、フレーム間の時系列情報を使った安定したトラッキングを保証する。
     pose_opt = vision.PoseLandmarkerOptions(
         base_options=base_options.BaseOptions(
             model_asset_path=str(pose_model_path),
             delegate=base_options.BaseOptions.Delegate.CPU,
         ),
-        running_mode=vision.RunningMode.IMAGE,
+        running_mode=vision.RunningMode.VIDEO,
         output_segmentation_masks=False,
     )
     hand_opt = vision.HandLandmarkerOptions(
@@ -80,7 +80,7 @@ def extract_pose_hand_px_from_video(
             model_asset_path=str(hand_model_path),
             delegate=base_options.BaseOptions.Delegate.CPU,
         ),
-        running_mode=vision.RunningMode.IMAGE,
+        running_mode=vision.RunningMode.VIDEO,
         num_hands=2,
     )
 
@@ -102,8 +102,9 @@ def extract_pose_hand_px_from_video(
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 mp_img = mp.Image(image_format=mp_image_format, data=rgb)
 
-                pose_res = pose_lm.detect(mp_img)
-                hand_res = hand_lm.detect(mp_img)
+                ts_ms = int(frame * 1000.0 / fps)
+                pose_res = pose_lm.detect_for_video(mp_img, ts_ms)
+                hand_res = hand_lm.detect_for_video(mp_img, ts_ms)
 
                 # Pose 側の主要上肢点を取得する。
                 hip_x = hip_y = sh_x = sh_y = el_x = el_y = wr_x = wr_y = pose_ix_x = pose_ix_y = np.nan
