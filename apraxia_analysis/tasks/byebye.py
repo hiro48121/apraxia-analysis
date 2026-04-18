@@ -793,6 +793,15 @@ def run_byebye(argv: list[str] | None = None) -> None:
     else:
         _add_cycle_means(meta, "all_", cycles_df)
 
+    # 関節角度列名をタスク横断で統一（selected10_/all_ プレフィックスと _mean_over_cycles サフィックスを除去）
+    for _jnt in ["shoulder", "elbow", "wrist", "index_mcp"]:
+        for _stat in ["range", "mean"]:
+            for _pfx in ["selected10_", "all_"]:
+                _old = f"{_pfx}{_jnt}_deg_{_stat}_mean_over_cycles"
+                _new = f"{_jnt}_deg_{_stat}_mean"
+                if _old in meta:
+                    meta[_new] = meta.pop(_old)
+
     summary_df = pd.DataFrame([meta])
 
     # -------------------------

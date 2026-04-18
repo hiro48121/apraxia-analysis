@@ -570,13 +570,13 @@ def process_hammer_trial(
                     return float("nan")
                 return float(np.nanmean(arr))
 
-            rom_sh = _range(shoulder_deg[s : e + 1])
-            rom_el = _range(elbow_deg[s : e + 1])
-            rom_wr = _range(wrist_deg[s : e + 1])
+            shoulder_deg_range = _range(shoulder_deg[s : e + 1])
+            elbow_deg_range = _range(elbow_deg[s : e + 1])
+            wrist_deg_range = _range(wrist_deg[s : e + 1])
 
-            mean_sh = _mean(shoulder_deg[s : e + 1])
-            mean_el = _mean(elbow_deg[s : e + 1])
-            mean_wr = _mean(wrist_deg[s : e + 1])
+            shoulder_deg_mean = _mean(shoulder_deg[s : e + 1])
+            elbow_deg_mean = _mean(elbow_deg[s : e + 1])
+            wrist_deg_mean = _mean(wrist_deg[s : e + 1])
 
             hit_time = (low - s) / fps
             lift_time = (e - low) / fps
@@ -615,12 +615,12 @@ def process_hammer_trial(
                     "traj_len_px": float(traj_len),
                     "vmax_px_s": float(vmax),
                     "amp_y_px": float(amp_y),
-                    "rom_shoulder_deg": rom_sh,
-                    "rom_elbow_deg": rom_el,
-                    "rom_wrist_deg": rom_wr,
-                    "mean_shoulder_deg": mean_sh,
-                    "mean_elbow_deg": mean_el,
-                    "mean_wrist_deg": mean_wr,
+                    "shoulder_deg_range": shoulder_deg_range,
+                    "elbow_deg_range": elbow_deg_range,
+                    "wrist_deg_range": wrist_deg_range,
+                    "shoulder_deg_mean": shoulder_deg_mean,
+                    "elbow_deg_mean": elbow_deg_mean,
+                    "wrist_deg_mean": wrist_deg_mean,
                     "cycle_valid": 1,
                     "n_frames_in_cycle": int(e - s + 1),
                     "n_missing_frames": n_missing,
@@ -869,12 +869,12 @@ def process_hammer_trial(
         "direction_deg_abs_mean": _col_mean("direction_deg_abs"),
         "traj_len_px_mean": _col_mean("traj_len_px"),
         "vmax_px_s_mean": _col_mean("vmax_px_s"),
-        "rom_shoulder_deg_mean": _col_mean("rom_shoulder_deg"),
-        "rom_elbow_deg_mean": _col_mean("rom_elbow_deg"),
-        "rom_wrist_deg_mean": _col_mean("rom_wrist_deg"),
-        "mean_shoulder_deg_mean": _col_mean("mean_shoulder_deg"),
-        "mean_elbow_deg_mean": _col_mean("mean_elbow_deg"),
-        "mean_wrist_deg_mean": _col_mean("mean_wrist_deg"),
+        "shoulder_deg_range_mean": _col_mean("shoulder_deg_range"),
+        "elbow_deg_range_mean": _col_mean("elbow_deg_range"),
+        "wrist_deg_range_mean": _col_mean("wrist_deg_range"),
+        "shoulder_deg_mean_mean": _col_mean("shoulder_deg_mean"),
+        "elbow_deg_mean_mean": _col_mean("elbow_deg_mean"),
+        "wrist_deg_mean_mean": _col_mean("wrist_deg_mean"),
         "selected_cycles": selected,
     }
 
