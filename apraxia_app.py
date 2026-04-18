@@ -55,7 +55,8 @@ SUMMARY_KEYS_COMMON = [
 SUMMARY_KEYS_HAMMER = [
     "cycle_time_mean_s", "cycle_time_sd_s", "rhythm_cv",
     "hit_time_mean_s", "lift_time_mean_s",
-    "vmax_px_s_mean", "rom_elbow_deg_mean",
+    "vmax_px_s_mean",
+    "shoulder_deg_range_mean", "elbow_deg_range_mean", "wrist_deg_range_mean",
     "best10_mean_corr", "best10_min_corr",
 ]
 SUMMARY_KEYS_BYEBYE_COMEHERE = [
@@ -65,6 +66,8 @@ SUMMARY_KEYS_BYEBYE_COMEHERE = [
     "start_to_onset_s",
     "selected10_amp_px_mean_over_cycles",
     "selected10_x_range_px_mean_over_cycles",
+    "shoulder_deg_range_mean", "elbow_deg_range_mean", "wrist_deg_range_mean",
+    "index_mcp_deg_range_mean",
 ]
 
 # ─────────────────────────────────────────────────────────────
