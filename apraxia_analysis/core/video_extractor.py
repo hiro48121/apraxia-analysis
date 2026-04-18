@@ -97,6 +97,8 @@ def extract_pose_hand_px_from_video(
                 if not ok:
                     break
 
+                if frame % 50 == 0:
+                    print(f"  extracting frame {frame}...", flush=True)
                 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
                 mp_img = mp.Image(image_format=mp_image_format, data=rgb)
 

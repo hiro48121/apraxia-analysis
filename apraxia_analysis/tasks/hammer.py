@@ -984,6 +984,8 @@ def extract_pose_px_from_video(
         ok, frame_bgr = cap.read()
         if not ok:
             break
+        if frame_idx % 50 == 0:
+            print(f"  extracting frame {frame_idx}...", flush=True)
         # BGR -> RGB
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
