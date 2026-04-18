@@ -963,14 +963,15 @@ def extract_pose_px_from_video(
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
 
-    # macOS 新バージョンで GPU 初期化がハングする問題を回避するため CPU を明示指定する。
+    # macOS 新バージョンで GPU 初期化・VIDEO モードがハングする問題を回避するため
+    # CPU delegate + IMAGE モードを使用する。
     base_options = python.BaseOptions(
         model_asset_path=str(pose_model),
         delegate=python.BaseOptions.Delegate.CPU,
     )
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
-        running_mode=vision.RunningMode.VIDEO,
+        running_mode=vision.RunningMode.IMAGE,
         num_poses=1,
     )
     landmarker = vision.PoseLandmarker.create_from_options(options)
@@ -986,9 +987,8 @@ def extract_pose_px_from_video(
         # BGR -> RGB
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_img = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-        ts_ms = int(round((frame_idx / fps) * 1000.0))
 
-        result = landmarker.detect_for_video(mp_img, ts_ms)
+        result = landmarker.detect(mp_img)
         pose_lms = None
         if result is not None and hasattr(result, "pose_landmarks") and result.pose_landmarks:
             pose_lms = result.pose_landmarks[0]
