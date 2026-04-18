@@ -297,6 +297,10 @@ def _build_argparser_byebye() -> argparse.ArgumentParser:
                     help="Minimum seconds after onset before looking for the quiet window.")
     ap.add_argument("--target_cycles", type=int, default=10,
                     help="Number of consecutive cycles to select as final analysis target.")
+    ap.add_argument("--use_cycles_from", type=int, default=4,
+                    help="関節角度ROM集計: 選択ブロック内の開始サイクル番号（1始まり、デフォルト: 4）")
+    ap.add_argument("--use_cycles_to", type=int, default=8,
+                    help="関節角度ROM集計: 選択ブロック内の終了サイクル番号（1始まり、デフォルト: 8）")
     ap.add_argument("--save_all_cycles", action="store_true",
                     help="Option kept for compatibility; no additional CSV is written.")
 
@@ -801,6 +805,27 @@ def run_byebye(argv: list[str] | None = None) -> None:
                 _new = f"{_jnt}_deg_{_stat}_mean"
                 if _old in meta:
                     meta[_new] = meta.pop(_old)
+
+    # 関節角度 ROM を選択ブロック内の use_cycles_from〜use_cycles_to 番目で再計算
+    # （hammer と同じ集計範囲に統一。ウォームアップ・疲労サイクルを除いた中間部分を使用）
+    _use_from = int(args.use_cycles_from)
+    _use_to = int(args.use_cycles_to)
+    _sel_sorted = sel_block_df.sort_values("start_frame").reset_index(drop=True) if len(sel_block_df) > 0 else pd.DataFrame()
+    if n_sel >= _use_to and len(_sel_sorted) > 0:
+        _use_df = _sel_sorted.iloc[_use_from - 1 : _use_to]
+    else:
+        _use_df = _sel_sorted
+    for _jnt in ["shoulder", "elbow", "wrist", "index_mcp"]:
+        for _stat in ["range", "mean"]:
+            _col = f"{_jnt}_deg_{_stat}"
+            _key = f"{_jnt}_deg_{_stat}_mean"
+            if _col in _use_df.columns and len(_use_df) > 0:
+                _vals = _use_df[_col].to_numpy(dtype=float)
+                meta[_key] = float(np.nanmean(_vals)) if np.any(np.isfinite(_vals)) else np.nan
+            else:
+                meta.setdefault(_key, np.nan)
+    meta["use_cycles_from"] = _use_from
+    meta["use_cycles_to"] = _use_to
 
     summary_df = pd.DataFrame([meta])
 
