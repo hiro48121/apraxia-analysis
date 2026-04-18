@@ -888,6 +888,10 @@ def process_hammer_trial(
         "rhythm_cv_selected10": _sel_rhythm_cv,
         "use_cycles_from": int(cfg.use_cycles_from),
         "use_cycles_to": int(cfg.use_cycles_to),
+        "start_to_onset_s": float((int(cycles_df["start_frame"].iloc[0]) - int(meta.get("cue_frame", 0))) / fps)
+            if (len(cycles_df) > 0 and "start_frame" in cycles_df.columns
+                and int(cycles_df["start_frame"].iloc[0]) >= int(meta.get("cue_frame", 0)))
+            else np.nan,
         "hit_time_mean_s": _col_mean("hit_time_s"),
         "lift_time_mean_s": _col_mean("lift_time_s"),
         "direction_deg_abs_mean": _col_mean("direction_deg_abs"),

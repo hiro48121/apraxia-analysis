@@ -53,11 +53,15 @@ SUMMARY_KEYS_COMMON = [
     "waveform_pass_10",
 ]
 SUMMARY_KEYS_HAMMER = [
+    "start_to_onset_s",
     "cycle_time_mean_s_selected10", "cycle_time_sd_s_selected10",
     "rhythm_cv_selected10",
     "hit_time_mean_s", "lift_time_mean_s",
+    "direction_deg_abs_mean",
+    "traj_len_px_mean",
     "vmax_px_s_mean",
     "shoulder_deg_range_mean", "elbow_deg_range_mean", "wrist_deg_range_mean",
+    "shoulder_deg_mean_mean", "elbow_deg_mean_mean", "wrist_deg_mean_mean",
     "waveform_mean_corr_10", "waveform_min_corr_10",
 ]
 SUMMARY_KEYS_BYEBYE_COMEHERE = [
