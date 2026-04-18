@@ -963,7 +963,11 @@ def extract_pose_px_from_video(
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
 
-    base_options = python.BaseOptions(model_asset_path=str(pose_model))
+    # macOS 新バージョンで GPU 初期化がハングする問題を回避するため CPU を明示指定する。
+    base_options = python.BaseOptions(
+        model_asset_path=str(pose_model),
+        delegate=python.BaseOptions.Delegate.CPU,
+    )
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
         running_mode=vision.RunningMode.VIDEO,

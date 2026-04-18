@@ -66,13 +66,20 @@ def extract_pose_hand_px_from_video(
     pose_idx = _pose_side_indices(side)
 
     # Pose / Hand の landmarker を VIDEO モードで作成する。
+    # macOS 新バージョンで GPU 初期化がハングする問題を回避するため CPU を明示指定する。
     pose_opt = vision.PoseLandmarkerOptions(
-        base_options=base_options.BaseOptions(model_asset_path=str(pose_model_path)),
+        base_options=base_options.BaseOptions(
+            model_asset_path=str(pose_model_path),
+            delegate=base_options.BaseOptions.Delegate.CPU,
+        ),
         running_mode=vision.RunningMode.VIDEO,
         output_segmentation_masks=False,
     )
     hand_opt = vision.HandLandmarkerOptions(
-        base_options=base_options.BaseOptions(model_asset_path=str(hand_model_path)),
+        base_options=base_options.BaseOptions(
+            model_asset_path=str(hand_model_path),
+            delegate=base_options.BaseOptions.Delegate.CPU,
+        ),
         running_mode=vision.RunningMode.VIDEO,
         num_hands=2,
     )
