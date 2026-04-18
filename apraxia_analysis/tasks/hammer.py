@@ -688,7 +688,7 @@ def process_hammer_trial(
     cycles_df["cycle_id10"] = np.nan
     cycles_df["selected_block"] = 0
     cycles_df["cycle_in_block"] = np.nan
-    cycles_df["wave_corr_selblock"] = np.nan
+    cycles_df["wave_corr_to_mean10"] = np.nan
 
     best_start = 0
     best_cv = float("nan")
@@ -719,7 +719,7 @@ def process_hammer_trial(
             best_mean_corr, best_min_corr = _block_wave_stats(waves_block)
             corrs_block = _corr_to_mean_wave(waves_block)
             for j, c in zip(sel_idx, corrs_block):
-                cycles_df.loc[j, "wave_corr_selblock"] = float(c)
+                cycles_df.loc[j, "wave_corr_to_mean10"] = float(c)
 
     cycle_id10_per_frame = np.full(len(df), fill_value=np.nan)
     if len(cycles_df) > 0 and "cycle_id" in cycles_df.columns:
@@ -751,7 +751,7 @@ def process_hammer_trial(
             "wrist_y_px_clean": y_filled.to_numpy(dtype=float),
             "outlier_step_px": outlier_step_px,
             "outlier_flag": outlier_flag,
-            "outlier_jump_th_px": float(outlier_jump_th) if (outlier_enabled and np.isfinite(outlier_jump_th)) else np.nan,
+            "outlier_jump_px": float(outlier_jump_th) if (outlier_enabled and np.isfinite(outlier_jump_th)) else np.nan,
             "hip_x_px": df.get("hip_x_px", np.nan),
             "hip_y_px": df.get("hip_y_px", np.nan),
             "shoulder_x_px": df.get("shoulder_x_px", np.nan),
@@ -822,6 +822,25 @@ def process_hammer_trial(
     ct_sd = _col_sd("cycle_time_s")
     rhythm_cv = float(ct_sd / ct_mean) if (np.isfinite(ct_sd) and np.isfinite(ct_mean) and ct_mean != 0) else float("nan")
 
+    # 選択 10 サイクル全体（use サブセットではなく sel）からサイクル時間統計を算出
+    # byebye/comehere の cycle_time_mean_s_selected10 と揃えるため
+    def _sel_col_mean(col: str) -> float:
+        if col not in sel.columns or len(sel) == 0:
+            return float("nan")
+        x = sel[col].to_numpy(dtype=float)
+        return float(np.nanmean(x)) if np.isfinite(x).any() else float("nan")
+
+    def _sel_col_sd(col: str) -> float:
+        if col not in sel.columns or len(sel) == 0:
+            return float("nan")
+        x = sel[col].to_numpy(dtype=float)
+        x = x[np.isfinite(x)]
+        return float(np.std(x, ddof=1)) if len(x) >= 2 else float("nan")
+
+    _sel_ct_mean = _sel_col_mean("cycle_time_s")
+    _sel_ct_sd = _sel_col_sd("cycle_time_s")
+    _sel_rhythm_cv = float(_sel_ct_sd / _sel_ct_mean) if (np.isfinite(_sel_ct_sd) and np.isfinite(_sel_ct_mean) and _sel_ct_mean != 0) else float("nan")
+
     summary = {
         "participant_id": meta.get("participant_id", ""),
         "task": "hammer",
@@ -833,14 +852,14 @@ def process_hammer_trial(
         "src_fps": float(fps),
         "n_frames": int(len(frames_df)),
         "outlier_enabled": int(outlier_enabled),
-        "outlier_jump_th_px": float(outlier_jump_th) if (outlier_enabled and np.isfinite(outlier_jump_th)) else np.nan,
+        "outlier_jump_px": float(outlier_jump_th) if (outlier_enabled and np.isfinite(outlier_jump_th)) else np.nan,
         "n_outlier_frames": int(np.sum(outlier_flag)) if outlier_enabled else 0,
         "n_cycles": int(len(use)),
         "n_cycles_detected": int(n_all),
         "n_cycles_selected10": int(n_sel),
-        "best10_cv": float(best_cv) if np.isfinite(best_cv) else float("nan"),
-        "best10_mean_corr": float(best_mean_corr) if np.isfinite(best_mean_corr) else float("nan"),
-        "best10_min_corr": float(best_min_corr) if np.isfinite(best_min_corr) else float("nan"),
+        "selected_cycles_cv": float(best_cv) if np.isfinite(best_cv) else float("nan"),
+        "waveform_mean_corr_10": float(best_mean_corr) if np.isfinite(best_mean_corr) else float("nan"),
+        "waveform_min_corr_10": float(best_min_corr) if np.isfinite(best_min_corr) else float("nan"),
         "waveform_resample_n": int(getattr(cfg, "waveform_resample_n", 100)),
         "waveform_min_corr_th": float(getattr(cfg, "waveform_min_corr", 0.75)),
         # 合格条件: ① target 個以上検出 ② 選択ブロックの最小相関値が閾値以上
@@ -864,6 +883,11 @@ def process_hammer_trial(
         "cycle_time_mean_s": ct_mean,
         "cycle_time_sd_s": ct_sd,
         "rhythm_cv": rhythm_cv,
+        "cycle_time_mean_s_selected10": _sel_ct_mean,
+        "cycle_time_sd_s_selected10": _sel_ct_sd,
+        "rhythm_cv_selected10": _sel_rhythm_cv,
+        "use_cycles_from": int(cfg.use_cycles_from),
+        "use_cycles_to": int(cfg.use_cycles_to),
         "hit_time_mean_s": _col_mean("hit_time_s"),
         "lift_time_mean_s": _col_mean("lift_time_s"),
         "direction_deg_abs_mean": _col_mean("direction_deg_abs"),
