@@ -34,18 +34,20 @@
 
 ```
 .
-├── apraxia_app.py            # デスクトップGUI（tkinter）
+├── apraxia_app.py            # デスクトップGUI（tkinter）★現在の推奨起動方法
 ├── apraxia_app.command       # macOS ダブルクリック起動用ランチャー
 ├── apraxia_analysis/         # 解析モジュール（パッケージ）
 │   ├── main.py               # CLI エントリポイント
-│   ├── core/
-│   │   ├── math_utils.py     # 信号処理・サイクル検出ユーティリティ
-│   │   └── video_extractor.py# MediaPipe による座標抽出
+│   ├── core/                 # 全タスク共通モジュール
+│   │   ├── math_utils.py     # 信号処理・サイクル検出・角度計算など共通ユーティリティ
+│   │   └── video_extractor.py# MediaPipe による座標抽出（全タスク共通）
 │   └── tasks/
 │       ├── hammer.py         # hammer タスク固有ロジック
 │       ├── byebye.py         # byebye タスク固有ロジック
 │       └── comehere.py       # comehere タスク固有ロジック
-└── video_to_*_metrics.py     # タスク別スタンドアロンスクリプト（旧版）
+└── video_to_*_metrics.py     # 【旧版・参照用】タスク別スタンドアロンスクリプト
+                               # 現在は apraxia_app.py + apraxia_analysis/ を使用
+                               # 削除せず参照用として保持
 ```
 
 ## 環境構築
