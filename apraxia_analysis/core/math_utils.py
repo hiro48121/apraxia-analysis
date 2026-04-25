@@ -24,7 +24,9 @@ def angle_deg(
     bx: float, by: float,
     cx: float, cy: float,
 ) -> float:
-    """Angle ABC in degrees. Returns NaN if any point is missing."""
+    """3点 A-B-C のなす角を度数法で返す（B を頂点とする角度）。
+    いずれかの座標が欠損（NaN）の場合は NaN を返す。
+    Angle ABC in degrees. Returns NaN if any point is missing."""
     pts = [ax, ay, bx, by, cx, cy]
     if any(pd.isna(v) for v in pts):
         return np.nan
@@ -39,7 +41,9 @@ def angle_deg(
 
 
 def pca_plane_deg(x: np.ndarray, y: np.ndarray) -> float:
-    """Principal direction angle (deg) of trajectory in 2D."""
+    """2次元軌跡の主方向角度（度）を返す。
+    PCA（主成分分析）で第1主成分の方向を算出する。
+    Principal direction angle (deg) of trajectory in 2D."""
     xy = np.column_stack([x, y]).astype(float)
     xy = xy[~np.isnan(xy).any(axis=1)]
     if len(xy) < 3:
@@ -52,7 +56,9 @@ def pca_plane_deg(x: np.ndarray, y: np.ndarray) -> float:
 
 
 def traj_len_px(x: np.ndarray, y: np.ndarray) -> float:
-    """Total trajectory length in pixels (NaN-safe)."""
+    """軌跡の総移動距離をピクセル単位で返す（NaN安全）。
+    連続フレーム間のユークリッド距離の合計値。
+    Total trajectory length in pixels (NaN-safe)."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     m = ~np.isnan(x) & ~np.isnan(y)
@@ -64,7 +70,9 @@ def traj_len_px(x: np.ndarray, y: np.ndarray) -> float:
 
 
 def max_speed_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> float:
-    """Maximum frame-to-frame speed in px/s (NaN-safe)."""
+    """フレーム間最大速度（px/s）を返す（NaN安全）。
+    連続フレーム間の移動距離 × fps の最大値。
+    Maximum frame-to-frame speed in px/s (NaN-safe)."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     m = ~np.isnan(x) & ~np.isnan(y)
@@ -77,13 +85,17 @@ def max_speed_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> float:
 
 
 def rolling_mean(x: np.ndarray, win: int) -> np.ndarray:
-    """Centred rolling mean with min_periods=1 (NaN-safe)."""
+    """中心揃えの移動平均を返す（NaN安全、min_periods=1）。
+    端点でも NaN にならないよう min_periods=1 を使用する。
+    Centred rolling mean with min_periods=1 (NaN-safe)."""
     s = pd.Series(x, dtype="float64")
     return s.rolling(int(win), center=True, min_periods=1).mean().to_numpy()
 
 
 def speed_series_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> np.ndarray:
-    """Per-frame speed (px/s) aligned to frame indices. speed[0] is NaN."""
+    """フレームごとの速度（px/s）を配列で返す。
+    speed[0] は前フレームがないため NaN。
+    Per-frame speed (px/s) aligned to frame indices. speed[0] is NaN."""
     x = np.asarray(x, dtype=float)
     y = np.asarray(y, dtype=float)
     n = len(x)
@@ -97,7 +109,9 @@ def speed_series_px_s(x: np.ndarray, y: np.ndarray, fps: float) -> np.ndarray:
 
 
 def _odd(n: int) -> int:
-    """Return n if odd, n+1 if even. Minimum value is 1."""
+    """n が奇数ならそのまま、偶数なら n+1 を返す（最小値は 1）。
+    rolling_mean の center=True には奇数ウィンドウが必要なため使用する。
+    Return n if odd, n+1 if even. Minimum value is 1."""
     n = int(max(1, n))
     return n if (n % 2 == 1) else (n + 1)
 
@@ -107,7 +121,8 @@ def _odd(n: int) -> int:
 # =========================
 
 def _as_str_array(a: Any) -> np.ndarray:
-    """Convert any array-like to a numpy object array of strings."""
+    """任意の配列を文字列型の numpy object 配列に変換する。
+    Convert any array-like to a numpy object array of strings."""
     if a is None:
         return np.array([], dtype=object)
     s = pd.Series(a).astype(str).to_numpy(dtype=object)
@@ -125,18 +140,18 @@ def detect_index_outliers(
     jump_px: float = 200.0,
     hand_pose_dist_px: float = 150.0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Detect outliers in representative index (x,y) series.
+    """代表指先座標（x, y）の外れ値を検出する。
 
-    Outlier rules:
-      1) jump: per-frame step distance hypot(dx,dy) > jump_px
-      2) hand_pose: if index_source=='hand' and both pose/hand index exist,
+    外れ値ルール:
+      1) jump     : フレーム間移動距離 hypot(dx,dy) > jump_px
+      2) hand_pose: index_source が 'hand' かつ Pose/Hand 両方の座標が存在する場合に
                     hypot(hand_index - pose_index) > hand_pose_dist_px
 
     Returns:
-      outlier_flag (int 0/1),
-      outlier_reason (str),
-      step_px (float),
-      hand_pose_dist_px_arr (float)
+      outlier_flag (int 0/1)        : 外れ値フラグ（1=外れ値）
+      outlier_reason (str)          : 外れ値の理由（'jump' / 'hand_pose' / 'jump|hand_pose'）
+      step_px (float)               : フレーム間移動距離（px）
+      hand_pose_dist_px_arr (float) : Hand と Pose の指先間距離（px）
     """
     ix = np.asarray(ix_raw, dtype=float)
     iy = np.asarray(iy_raw, dtype=float)
@@ -175,7 +190,9 @@ def detect_index_outliers(
 
 
 def _interpolate_with_gap_limit(arr: np.ndarray, max_gap_frames: int) -> np.ndarray:
-    """Linear interpolation with a maximum consecutive-gap limit."""
+    """欠損区間に線形補間を適用する（最大連続欠損フレーム数で制限）。
+    max_gap_frames を超える連続欠損は補間せず NaN のまま残す。
+    Linear interpolation with a maximum consecutive-gap limit."""
     s = pd.Series(arr, dtype="float64")
     lim = int(max(1, max_gap_frames))
     # interpolate only small gaps
@@ -191,7 +208,8 @@ def apply_outlier_cleaning_2d(
     outlier_flag: np.ndarray,
     max_gap_frames: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Replace outlier frames with NaN, then interpolate (limited gap) for x and y."""
+    """外れ値フレームを NaN に置換し、制限付き線形補間で補正した (x, y) を返す。
+    Replace outlier frames with NaN, then interpolate (limited gap) for x and y."""
     ix = np.asarray(ix_raw, dtype=float).copy()
     iy = np.asarray(iy_raw, dtype=float).copy()
     m = np.asarray(outlier_flag, dtype=int) == 1
@@ -213,10 +231,13 @@ def detect_onset_frame(
     k_mad: float = 3.0,
     hold_frames: int = 5,
 ) -> tuple[int | None, float]:
-    """Detect movement onset after cue_frame using baseline median + k*MAD threshold.
+    """キュー後の動作開始フレームを速度ベースで検出する。
 
-    Baseline: prefer immediately BEFORE cue_frame if possible, else AFTER cue_frame.
-    Returns (onset_frame_index_or_None, threshold_px_s).
+    ベースライン（安静時速度）の中央値 + k × MAD を閾値とし、
+    閾値超えが hold_frames 連続したフレームを動作開始とみなす。
+    ベースラインはキュー直前を優先し、直前が不足する場合はキュー直後を使用。
+
+    Returns (onset_frame_index または None, threshold_px_s).
     """
     speed = np.asarray(speed_px_s_arr, dtype=float)
     n = len(speed)
@@ -263,10 +284,13 @@ def detect_movement_segment(
     quiet_frames: int = 15,
     min_movement_frames: int = 15,
 ) -> tuple[int | None, int | None, float, str]:
-    """Detect movement segment [start_frame, end_frame] using per-frame speed (px/s).
+    """速度ベースで動作区間 [start_frame, end_frame] を検出する。
+
+    開始: detect_onset_frame と同じ閾値で検出。
+    終了: 閾値以下が quiet_frames 連続した時点（method='quiet'）、または
+         最後に閾値を超えたフレーム（method='last_above_thr'）のどちらか早い方。
 
     Returns (start_frame, end_frame, threshold_px_s, method).
-    method: 'quiet' (end found by quiet period) or 'last_above_thr'.
     """
     speed = np.asarray(speed_px_s_arr, dtype=float)
     n = len(speed)
@@ -336,10 +360,12 @@ def select_best_contiguous_cycles_by_cv(
     fps: float,
     target_n: int = 10,
 ) -> tuple[list[dict], float, int]:
-    """Select a contiguous window of target_n cycles whose cycle_time_s CV is minimal.
+    """サイクル時間の変動係数（CV）が最小となる連続 target_n サイクルの窓を選択する。
+
+    全サイクル中のすべての連続窓を走査し CV 最小の窓を返す（byebye で使用）。
+    len(cycles) < target_n の場合は全サイクルをそのまま返す。
 
     Returns (selected_cycles, best_cv, window_start_index).
-    If len(cycles) < target_n, returns (cycles, NaN, 0).
     """
     cycles = list(cycles) if cycles is not None else []
     if len(cycles) < int(target_n) or int(target_n) <= 0:
@@ -383,13 +409,17 @@ def find_local_extrema_prom(
     min_prom_px: float = 0.0,
     prom_win_frames: int = 15,
 ) -> tuple[list[int], list[int]]:
-    """Return (maxima_idx, minima_idx) for a smoothed series x, with:
-      - local extremum rule
-      - minimum separation (frames)
-      - global amplitude floor (min_amp_px)
-      - prominence threshold:
-          prom_px >= max(min_prom_px, min_prom_ratio * (global_range))
-        where prom_px is estimated within a +/- prom_win_frames window.
+    """平滑化系列 x の局所極大・極小インデックスを返す。
+
+    以下の条件を全て満たす点を有効な極値として検出する:
+      - 局所的な極値（前後の点より大きい/小さい）
+      - 最小間隔（min_sep_frames フレーム以上）
+      - 全体振幅の下限（min_amp_px 以上）
+      - プロミネンス（突出度）閾値:
+          prom_px >= max(min_prom_px, min_prom_ratio × 全体レンジ)
+        ※ プロミネンスは ±prom_win_frames 窓内で推定
+
+    Returns (maxima_idx, minima_idx).
     """
     x = np.asarray(x, dtype=float)
     n = len(x)
@@ -457,11 +487,13 @@ def build_cycles_from_extrema(
     min_cycle_s: float = 0.3,
     max_cycle_s: float = 3.0,
 ) -> list[dict]:
-    """Build cycle list from detected extrema.
+    """検出された極値からサイクルリストを構築する。
 
-    Cycle definition:
-      If first extremum after start_search_frame is MAX:  max -> min -> next max
-      If first extremum after start_search_frame is MIN:  min -> max -> next min
+    サイクルの定義（search_start 以降の最初の極値の種類で決まる）:
+      最初の極値が MAX の場合: max → min → 次の max
+      最初の極値が MIN の場合: min → max → 次の min
+    min_cycle_s〜max_cycle_s の範囲外のサイクルは除外する。
+
     Returns list of dict: {cycle_id, start_frame, opp_frame, end_frame}.
     """
     x_smooth = np.asarray(x_smooth, dtype=float)
@@ -516,7 +548,8 @@ def build_cycles_from_extrema(
 # =========================
 
 def _resample_1d_nan(arr: np.ndarray, n: int) -> np.ndarray:
-    """Resample a 1D array to n points using linear interpolation (NaN-safe)."""
+    """1次元配列を n 点に線形補間でリサンプリングする（NaN安全）。
+    Resample a 1D array to n points using linear interpolation (NaN-safe)."""
     a = np.asarray(arr, dtype=float)
     n = int(n)
     if n <= 1:
@@ -537,7 +570,9 @@ def _cycle_waveforms_from_y(
     cycles_df: pd.DataFrame,
     resample_n: int,
 ) -> np.ndarray:
-    """Return (n_cycles, resample_n) matrix of per-cycle waveforms from y_sm."""
+    """y_sm から各サイクルの波形を切り出し、(n_cycles, resample_n) の行列として返す。
+    各サイクルは resample_n 点に統一してリサンプリングする。
+    Return (n_cycles, resample_n) matrix of per-cycle waveforms from y_sm."""
     y_sm = np.asarray(y_sm, dtype=float)
     resample_n = int(resample_n)
     if cycles_df is None or len(cycles_df) == 0:
@@ -562,7 +597,9 @@ def _cycle_waveforms_from_y(
 
 
 def _corr_to_mean_wave(waves: np.ndarray) -> np.ndarray:
-    """Correlation of each waveform to the mean waveform (NaN-safe, requires enough valid points)."""
+    """各波形と平均波形のピアソン相関係数を配列で返す（NaN安全）。
+    有効点が全体の 20% 未満の場合は NaN を返す。
+    Correlation of each waveform to the mean waveform (NaN-safe, requires enough valid points)."""
     w = np.asarray(waves, dtype=float)
     if w.ndim != 2 or w.size == 0:
         return np.array([], dtype=float)
@@ -587,7 +624,8 @@ def _corr_to_mean_wave(waves: np.ndarray) -> np.ndarray:
 
 
 def _block_wave_stats(waves_block: np.ndarray) -> tuple[float, float]:
-    """Mean and min correlation of waveforms to their mean waveform."""
+    """波形ブロックの平均相関・最小相関を返す。
+    Mean and min correlation of waveforms to their mean waveform."""
     corrs = _corr_to_mean_wave(waves_block)
     if np.isfinite(corrs).any():
         return float(np.nanmean(corrs)), float(np.nanmin(corrs))
@@ -599,7 +637,10 @@ def _best_contiguous_block_by_waveform_then_cv(
     waveforms: np.ndarray,
     target: int,
 ) -> tuple[int, float, float, float]:
-    """Select best contiguous block prioritising mean waveform correlation, then CV.
+    """波形一貫性優先で最適な連続サイクルブロックを選択する（同等の場合はリズム CV 最小）。
+
+    comehere タスクで使用。byebye（CV 最小選択）と異なり、
+    波形の類似度（mean_corr）が高いブロックを優先する。
 
     Returns (best_start_index, best_cv, best_mean_corr, best_min_corr).
     """

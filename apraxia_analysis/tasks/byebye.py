@@ -40,7 +40,9 @@ from ..core.video_extractor import extract_pose_hand_px_from_video
 # ─── byebye固有ユーティリティ ─────────────────────────────────────────────────
 
 def _cycle_time_stats(df: pd.DataFrame) -> tuple[float, float, float]:
-    """Compute mean, SD, CV of cycle_time_s. Returns (mean, sd, cv) — NaN if insufficient data."""
+    """cycle_time_s 列の平均・標準偏差・変動係数（CV）を計算して返す。
+    データが不足している場合は (NaN, NaN, NaN) を返す。
+    Returns (mean, sd, cv)."""
     if df is None or len(df) == 0 or "cycle_time_s" not in df.columns:
         return np.nan, np.nan, np.nan
     t = df["cycle_time_s"].to_numpy(dtype=float)
@@ -53,7 +55,9 @@ def _cycle_time_stats(df: pd.DataFrame) -> tuple[float, float, float]:
 
 
 def _add_cycle_means(meta: dict[str, Any], prefix: str, df: pd.DataFrame) -> None:
-    """Append nanmean of each cycle metric to *meta* under ``{prefix}{key}_mean_over_cycles``."""
+    """各サイクル指標の NaN を無視した平均値を meta に追加する。
+    キー名は ``{prefix}{key}_mean_over_cycles`` の形式。
+    Append nanmean of each cycle metric to *meta* under ``{prefix}{key}_mean_over_cycles``."""
     if df is None or len(df) == 0:
         return
     for k in [
@@ -206,6 +210,11 @@ def _compute_waveform_qc(
 
     各サイクルを resample_n 点にリサンプリングし、ブロック平均波形との
     Pearson 相関を求める。cycles_df の wave_corr_to_mean10 列を in-place で更新。
+
+    合格条件:
+      ① 選択サイクル数がぴったり target_cycles 個
+      ② 全サイクルの相関値が有限かつ waveform_min_corr 以上
+
     Returns (waveform_pass_10, wave_mean_corr_10, wave_min_corr_10).
     """
     n_sel = int((cycles_df.get("selected10", 0) == 1).sum()) if len(cycles_df) > 0 else 0
@@ -240,7 +249,8 @@ def _compute_waveform_qc(
 
 
 def _build_argparser_byebye() -> argparse.ArgumentParser:
-    """Return the argument parser for the byebye task CLI."""
+    """byebye タスクの CLI 引数パーサーを返す。
+    Return the argument parser for the byebye task CLI."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--video", required=True)
     ap.add_argument("--pose_model", required=True)
@@ -316,7 +326,10 @@ def _build_argparser_byebye() -> argparse.ArgumentParser:
 # ─── 波形PNG出力 ─────────────────────────────────────────────────────────────
 
 def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
-    """Save waveform png for byebye. Prefer cleaned cycle-signal / index-x so the exported waveform matches lateral byebye motion and reflects outlier processing."""
+    """byebye タスクの波形 PNG を保存する。
+    バイバイ動作の主運動方向（横方向 X 軸）を表す cycle_signal_smooth_px を優先し、
+    外れ値処理後のクリーン系列が波形に反映されるようにする。
+    Save waveform png for byebye."""
     import matplotlib.pyplot as plt
 
     out_dir = Path(out_dir)
@@ -371,6 +384,17 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
 # ─── メインエントリポイント ───────────────────────────────────────────────────
 
 def run_byebye(argv: list[str] | None = None) -> None:
+    """byebye タスクの解析メインエントリポイント。
+
+    処理の流れ:
+      1. 動画から Pose + Hand ランドマークを抽出
+      2. 外れ値処理（ジャンプ検出・Hand/Pose 整合チェック）
+      3. 動作開始フレームと動作区間を手首速度ベースで検出
+      4. 横方向（dx）信号からサイクルを検出（最大3段階の閾値緩和あり）
+      5. サイクル時間 CV 最小の連続10サイクルを選択
+      6. 選択ブロックの波形類似度 QC を実施
+      7. frames.csv / cycles.csv / summary.csv / waveform PNG を保存
+    """
     args = _build_argparser_byebye().parse_args(argv)
 
     video_path = Path(args.video).expanduser()
