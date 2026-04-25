@@ -65,14 +65,17 @@ SUMMARY_KEYS_HAMMER = [
     "waveform_mean_corr_10", "waveform_min_corr_10",
 ]
 SUMMARY_KEYS_BYEBYE_COMEHERE = [
+    "start_to_onset_s",
     "cycle_time_mean_s_selected10", "cycle_time_sd_s_selected10",
     "rhythm_cv_selected10",
-    "waveform_mean_corr_10", "waveform_min_corr_10",
-    "start_to_onset_s",
-    "selected10_amp_px_mean_over_cycles",
-    "selected10_x_range_px_mean_over_cycles",
+    "selected10_area_px2_mean_over_cycles",
+    "selected10_traj_len_px_mean_over_cycles",
+    "selected10_max_speed_px_s_mean_over_cycles",
     "shoulder_deg_range_mean", "elbow_deg_range_mean", "wrist_deg_range_mean",
     "index_mcp_deg_range_mean",
+    "shoulder_deg_mean_mean", "elbow_deg_mean_mean", "wrist_deg_mean_mean",
+    "index_mcp_deg_mean_mean",
+    "waveform_mean_corr_10", "waveform_min_corr_10",
 ]
 
 # ─────────────────────────────────────────────────────────────
