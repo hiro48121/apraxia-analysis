@@ -463,13 +463,82 @@ class ApraxiaApp(tk.Tk):
             daemon=True,
         ).start()
 
+    # ──────────────────────────────────────────────────────────
+    #  HEVC → H.264 自動変換（バックグラウンドスレッド内で呼ぶこと）
+    # ──────────────────────────────────────────────────────────
+
+    def _ensure_readable_video_bg(self, video_path: str) -> "str | None":
+        """OpenCV で読めない動画（HEVC/H.265 等）を H.264 MP4 に変換する。
+        バックグラウンドスレッドから呼ぶこと（UI はブロックしない）。
+        成功時は使用すべきパス文字列、失敗時は None を返す。"""
+        import cv2
+        cap = cv2.VideoCapture(video_path)
+        opened = cap.isOpened()
+        if opened:
+            ret, _ = cap.read()
+            opened = ret
+        cap.release()
+        if opened:
+            return video_path  # 読めるのでそのまま使う
+
+        self.after(0, self._log_write,
+                   "[変換] OpenCV で読めない動画を検出（HEVC/H.265 の可能性）。"
+                   "H.264 に自動変換します...")
+        try:
+            import av  # type: ignore
+        except ImportError:
+            self.after(0, lambda: messagebox.showerror(
+                "ライブラリ不足",
+                "HEVC 動画の変換に PyAV が必要です。\n\n"
+                "ターミナルで以下を実行してください:\n"
+                f"{PYTHON} -m pip install av"
+            ))
+            return None
+
+        from pathlib import Path as _Path
+        src = _Path(video_path)
+        dst = src.with_name(src.stem + "_h264.mp4")
+
+        try:
+            with av.open(str(src)) as inp:
+                with av.open(str(dst), "w") as out:
+                    in_stream = inp.streams.video[0]
+                    out_stream = out.add_stream(
+                        "libx264", rate=in_stream.average_rate)
+                    out_stream.width   = in_stream.width
+                    out_stream.height  = in_stream.height
+                    out_stream.pix_fmt = "yuv420p"
+                    for frame in inp.decode(video=0):
+                        for pkt in out_stream.encode(frame):
+                            out.mux(pkt)
+                    for pkt in out_stream.encode():
+                        out.mux(pkt)
+
+            dst_name = dst.name
+            self.after(0, self._log_write,
+                       f"[変換完了] {dst_name} として保存しました")
+            self.after(0, lambda: self._video_label.config(
+                text=f"選択済: {dst_name}（H.264 変換済）"))
+            return str(dst)
+        except Exception as e:
+            err = str(e)
+            self.after(0, lambda: messagebox.showerror("動画変換エラー", err))
+            return None
+
     def _run_analysis(self, task: str, pid: str, set_id: str,
                       trial_id: str, out_dir_str: str):
+        # HEVC 等で OpenCV が読めない場合は H.264 に変換してからパスを差し替える
+        # （このメソッドはすでにバックグラウンドスレッドで動いているので UI はブロックしない）
+        video_path = self._ensure_readable_video_bg(self._video_path)
+        if video_path is None:
+            self.after(0, self._reset_btn)
+            return
+
         try:
             cmd = [
                 PYTHON, "-m", "apraxia_analysis.main",
                 "--task",           task,
-                "--video",          self._video_path,
+                "--video",          video_path,
                 "--pose_model",     self._pose_model_var.get(),
                 "--out_dir",        out_dir_str,
                 "--side",           self._side_var.get(),
