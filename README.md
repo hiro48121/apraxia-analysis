@@ -23,12 +23,26 @@
 
 ## 主な解析指標
 
-- **cycle_time_mean_s** : 平均サイクル時間（秒）
-- **rhythm_cv** : リズム変動係数（SD / mean）
-- **waveform_pass_10** : 選択10サイクルの波形一致判定（1=合格）
-- **rom_elbow_deg_mean** : 平均肘関節可動域（hammer）
-- **x_range_px_mean_over_cycles** : 横方向振れ幅の平均（byebye / comehere）
-- **start_to_onset_s** : Cue から動作開始までの時間（byebye / comehere）
+全タスク共通：
+- **start_to_onset_s** : Cue から動作開始までの時間（秒）
+- **cycle_time_mean_s_selected10** : 選択サイクルの平均サイクル時間（秒）
+- **rhythm_cv_selected10** : リズム変動係数（SD / mean）
+- **waveform_mean_corr_10** : 選択サイクルの波形類似度・平均相関
+- **waveform_pass_10** : 波形類似度の合格判定（1=合格）
+
+hammer 固有：
+- **hit_time_mean_s** : 打鍵時間・平均（秒）
+- **lift_time_mean_s** : 振り上げ時間・平均（秒）
+- **direction_deg_abs_mean** : 運動方向角度・平均（度）
+- **traj_len_px_mean** : 軌道長・平均（ピクセル）
+- **vmax_px_s_mean** : 最大速度・平均（ピクセル/秒）
+- **shoulder/elbow/wrist_deg_range_mean** : 肩・肘・手関節可動域・平均（度）
+
+byebye / comehere 固有：
+- **selected10_area_px2_mean_over_cycles** : 面積・平均（ピクセル²）
+- **selected10_traj_len_px_mean_over_cycles** : 軌道長・平均（ピクセル）
+- **selected10_max_speed_px_s_mean_over_cycles** : 最大速度・平均（ピクセル/秒）
+- **shoulder/elbow/wrist/index_mcp_deg_range_mean** : 肩・肘・手関節・手指MP関節可動域・平均（度）
 
 ## ファイル構成
 
@@ -55,7 +69,7 @@
 Python 3.10 以上を推奨。
 
 ```bash
-pip install mediapipe opencv-python numpy pandas scipy matplotlib Pillow
+pip install mediapipe opencv-python numpy pandas scipy matplotlib Pillow av
 ```
 
 MediaPipe のモデルファイル（`.task`）は別途ダウンロードしてください：
@@ -95,10 +109,12 @@ python -m apraxia_analysis.main \
 
 ## サイクル選択アルゴリズム
 
-1. 動作区間を速度ベースで自動検出
-2. 局所極値からサイクルを検出（scipy.signal.find_peaks）
-3. `target_cycles`（デフォルト10）個の連続サイクルを全窓で試し、**サイクル時間CVが最小の窓**を選択
-4. 選択ブロックの波形相関（各サイクル vs 平均波形）で一致性を評価
+1. 手首速度のベースライン（中央値 + k×MAD）を閾値として動作区間を自動検出
+2. カスタム実装の局所極値検出（プロミネンス閾値・最小間隔・振れ幅フィルタ）でサイクルを検出
+3. `target_cycles`（デフォルト10）個の連続サイクルを全窓で走査し、最適な窓を選択
+   - **hammer / byebye** : サイクル時間の変動係数（CV）が最小の窓を選択
+   - **comehere** : 波形類似度（平均相関）が最大の窓を優先し、同等の場合は CV 最小を選択
+4. 選択ブロックの波形相関（各サイクル vs ブロック平均波形）で一致性を評価し `waveform_pass_10` を出力
 
 ## 注意事項
 
