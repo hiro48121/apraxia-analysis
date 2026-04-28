@@ -316,7 +316,7 @@ class ApraxiaApp(tk.Tk):
         out_lf = ttk.LabelFrame(parent, text="出力先フォルダ", padding=8)
         out_lf.pack(fill="x", pady=(0, 6))
         self._out_dir_var = tk.StringVar(
-            value=str(Path.home() / "Desktop" / "apraxia_results"))
+            value=str(APP_DIR / "results"))
         row = ttk.Frame(out_lf)
         row.pack(fill="x")
         ttk.Entry(row, textvariable=self._out_dir_var).pack(
