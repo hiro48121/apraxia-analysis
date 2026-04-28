@@ -286,6 +286,8 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     おいでおいで動作の主運動方向（縦方向 Y 軸）の index_y_px を優先し、
     外れ値処理後のクリーン系列が波形に反映されるようにする。
     Save representative index y waveform png (y axis in px)."""
+    import matplotlib
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     out_dir = Path(out_dir)

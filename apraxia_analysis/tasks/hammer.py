@@ -1060,6 +1060,8 @@ def extract_pose_px_from_video(
 
 def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     """Save wrist-y waveform as a PNG file."""
+    import matplotlib
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     out_dir = Path(out_dir)

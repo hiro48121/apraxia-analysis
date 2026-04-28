@@ -330,6 +330,8 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     バイバイ動作の主運動方向（横方向 X 軸）を表す cycle_signal_smooth_px を優先し、
     外れ値処理後のクリーン系列が波形に反映されるようにする。
     Save waveform png for byebye."""
+    import matplotlib
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     out_dir = Path(out_dir)
