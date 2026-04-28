@@ -451,6 +451,28 @@ class ApraxiaApp(tk.Tk):
                                      f"Handモデルが見つかりません:\n{self._hand_model_var.get()}")
                 return
 
+        # ── Windows：非ASCIIパスの事前チェック ──
+        if sys.platform == "win32":
+            checks = [
+                ("動画ファイル",   self._video_path),
+                ("Poseモデル",     self._pose_model_var.get()),
+                ("出力先フォルダ", self._out_dir_var.get()),
+                ("アプリフォルダ", str(APP_DIR)),
+            ]
+            if task in ("byebye", "comehere"):
+                checks.append(("Handモデル", self._hand_model_var.get()))
+            problem = [f"・{label}:\n  {path}"
+                       for label, path in checks if path and not path.isascii()]
+            if problem:
+                messagebox.showerror(
+                    "パスエラー",
+                    "以下のパスに日本語や全角文字が含まれています。\n"
+                    "Windows環境ではMediaPipeが正しく動作しない場合があります。\n\n"
+                    + "\n".join(problem) +
+                    "\n\n英数字のみのパスに変更してから再度お試しください。"
+                )
+                return
+
         pid = self._pid_var.get().strip() or "noname"
 
         # ── 出力フォルダを決定 ──
@@ -674,6 +696,22 @@ class ApraxiaApp(tk.Tk):
             else:
                 self.after(0, self._log_write,
                            f"\n[エラー] 解析が異常終了しました（コード: {proc.returncode}）")
+                # Mac：非ASCIIパスが原因の可能性をヒントとして表示
+                if sys.platform != "win32":
+                    checks = [
+                        ("動画ファイル",   video_path),
+                        ("Poseモデル",     self._pose_model_var.get()),
+                        ("出力先フォルダ", out_dir_str),
+                        ("アプリフォルダ", str(APP_DIR)),
+                    ]
+                    problem = [f"・{label}:\n  {path}"
+                               for label, path in checks if path and not path.isascii()]
+                    if problem:
+                        hint = "\n".join(problem)
+                        self.after(0, self._log_write,
+                                   "\n[ヒント] 以下のパスに日本語や全角文字が含まれています。\n"
+                                   "これが原因の可能性があります。\n"
+                                   "英数字のみのパスに変更してお試しください。\n" + hint)
                 self.after(0, self._reset_btn)
 
         except FileNotFoundError:
