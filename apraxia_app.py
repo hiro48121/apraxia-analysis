@@ -510,7 +510,7 @@ class ApraxiaApp(tk.Tk):
 
     def _load_video_preview(self, video_path: str):
         """動画選択直後にプレビューフレームと動画情報を表示する（バックグラウンドスレッド）。"""
-        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=4.0)
+        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=8.0)
 
         if timed_out or not opened:
             if cap:
@@ -571,7 +571,7 @@ class ApraxiaApp(tk.Tk):
         """OpenCV で読めない動画（HEVC/H.265 等）を H.264 MP4 に変換する。
         バックグラウンドスレッドから呼ぶこと（UI はブロックしない）。
         成功時は使用すべきパス文字列、失敗時は None を返す。"""
-        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=4.0)
+        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=8.0)
         if cap:
             try:
                 cap.release()
