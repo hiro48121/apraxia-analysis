@@ -231,6 +231,12 @@ class ApraxiaApp(tk.Tk):
         )
         self._preview_label.pack(expand=True, fill="both")
 
+        self._video_info_label = tk.Label(
+            self._preview_frame, bg=surface, fg="#555555",
+            text="", font=("Helvetica Neue", 11),
+        )
+        self._video_info_label.pack(side="bottom", pady=(0, 4))
+
         # ログ
         log_lf = ttk.LabelFrame(parent, text="ログ", padding=4)
         log_lf.grid(row=2, column=0, sticky="ew", pady=(8, 0))
@@ -354,6 +360,14 @@ class ApraxiaApp(tk.Tk):
                 text=f"選択済: {Path(path).name}",
                 fg="#1a1612",
             )
+            self._preview_label.config(image="", text="動画情報を読み込み中...", fg="#9e9088")
+            self._preview_label.image = None
+            self._video_info_label.config(text="", fg="#555555")
+            threading.Thread(
+                target=self._load_video_preview,
+                args=(path,),
+                daemon=True,
+            ).start()
 
     def _pick_file(self, var: tk.StringVar, filetypes=None):
         path = filedialog.askopenfilename(
@@ -467,6 +481,89 @@ class ApraxiaApp(tk.Tk):
         ).start()
 
     # ──────────────────────────────────────────────────────────
+    #  動画プレビュー（選択直後）
+    # ──────────────────────────────────────────────────────────
+
+    def _open_cap_with_timeout(self, video_path: str, timeout: float = 4.0):
+        """cv2.VideoCapture をタイムアウト付きで開く。
+        戻り値: (cap, opened, timed_out)"""
+        result = {"cap": None, "opened": False}
+
+        def _open():
+            import cv2
+            cap = cv2.VideoCapture(video_path)
+            opened = cap.isOpened()
+            if opened:
+                ret, _ = cap.read()
+                opened = ret
+                if ret:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            result["cap"] = cap
+            result["opened"] = opened
+
+        t = threading.Thread(target=_open, daemon=True)
+        t.start()
+        t.join(timeout)
+        if t.is_alive():
+            return None, False, True
+        return result["cap"], result["opened"], False
+
+    def _load_video_preview(self, video_path: str):
+        """動画選択直後にプレビューフレームと動画情報を表示する（バックグラウンドスレッド）。"""
+        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=4.0)
+
+        if timed_out or not opened:
+            if cap:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            msg = "⚠ HEVC（H.265）形式の可能性があります\n解析時に自動的にH.264へ変換されます"
+            self.after(0, lambda: self._video_info_label.config(text=msg, fg="#b85c00"))
+            self.after(0, lambda: self._preview_label.config(
+                text="プレビュー不可（HEVC形式）", fg="#9e9088"))
+            return
+
+        import cv2
+        width    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps      = cap.get(cv2.CAP_PROP_FPS)
+        n_frames = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        duration = n_frames / fps if fps > 0 else 0
+
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        ret, frame = cap.read()
+        cap.release()
+
+        info = f"{width}×{height}  /  {fps:.1f} fps  /  {duration:.1f} 秒"
+        self.after(0, lambda: self._video_info_label.config(text=info, fg="#444444"))
+
+        if ret:
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self.after(0, lambda f=frame_rgb: self._display_frame_preview(f))
+        else:
+            self.after(0, lambda: self._preview_label.config(
+                text="フレーム取得失敗", fg="#9e9088"))
+
+    def _display_frame_preview(self, frame_rgb):
+        """NumPy 配列（RGB）をプレビューラベルに表示する。"""
+        try:
+            from PIL import Image, ImageTk
+            img = Image.fromarray(frame_rgb)
+            self._preview_frame.update_idletasks()
+            w = max(200, self._preview_frame.winfo_width() - 20)
+            h = max(150, self._preview_frame.winfo_height() - 60)
+            img.thumbnail((w, h), Image.LANCZOS)
+            photo = ImageTk.PhotoImage(img)
+            self._preview_label.config(image=photo, text="")
+            self._preview_label.image = photo
+        except ImportError:
+            self._preview_label.config(
+                text="プレビュー不可\n(Pillow 未インストール)", image="", fg="#9e9088")
+        except Exception as e:
+            self._preview_label.config(text=f"プレビューエラー:\n{e}", image="", fg="#9e9088")
+
+    # ──────────────────────────────────────────────────────────
     #  HEVC → H.264 自動変換（バックグラウンドスレッド内で呼ぶこと）
     # ──────────────────────────────────────────────────────────
 
@@ -474,27 +571,32 @@ class ApraxiaApp(tk.Tk):
         """OpenCV で読めない動画（HEVC/H.265 等）を H.264 MP4 に変換する。
         バックグラウンドスレッドから呼ぶこと（UI はブロックしない）。
         成功時は使用すべきパス文字列、失敗時は None を返す。"""
-        import cv2
-        cap = cv2.VideoCapture(video_path)
-        opened = cap.isOpened()
+        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=4.0)
+        if cap:
+            try:
+                cap.release()
+            except Exception:
+                pass
         if opened:
-            ret, _ = cap.read()
-            opened = ret
-        cap.release()
-        if opened:
-            return video_path  # 読めるのでそのまま使う
+            return video_path
 
+        reason = "タイムアウト（HEVC/H.265の可能性）" if timed_out else "読み込みエラー"
         self.after(0, self._log_write,
-                   "[変換] OpenCV で読めない動画を検出（HEVC/H.265 の可能性）。"
-                   "H.264 に自動変換します...")
+                   f"[変換] OpenCV で読めない動画を検出（{reason}）。H.264 に自動変換します...")
         try:
             import av  # type: ignore
         except ImportError:
             self.after(0, lambda: messagebox.showerror(
                 "ライブラリ不足",
-                "HEVC 動画の変換に PyAV が必要です。\n\n"
-                "ターミナルで以下を実行してください:\n"
-                f"{PYTHON} -m pip install av"
+                "この動画は HEVC（H.265）形式のため、変換が必要です。\n"
+                "変換には PyAV ライブラリが必要ですが、インストールされていません。\n\n"
+                "【インストール手順】\n"
+                "1. ターミナル（Mac）またはコマンドプロンプト（Windows）を開く\n"
+                "2. 以下のコマンドを実行する:\n\n"
+                f"   {sys.executable} -m pip install av\n\n"
+                "3. インストール完了後、アプリを再起動して再度お試しください。\n\n"
+                "※ Windows の場合は、別途 ffmpeg のインストールが必要な場合があります。\n"
+                "  詳細は README.md の「動画形式について」をご参照ください。"
             ))
             return None
 
