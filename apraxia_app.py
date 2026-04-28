@@ -118,6 +118,7 @@ class ApraxiaApp(tk.Tk):
 
         self._build_ui()
         self._restore_values()
+        self._apply_default_models()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # ──────────────────────────────────────────────────────────
@@ -790,6 +791,16 @@ class ApraxiaApp(tk.Tk):
         if "pose_model" in cfg: self._pose_model_var.set(cfg["pose_model"])
         if "hand_model" in cfg: self._hand_model_var.set(cfg["hand_model"])
         if "out_dir"    in cfg: self._out_dir_var.set(cfg["out_dir"])
+
+    def _apply_default_models(self):
+        """models/ フォルダに既定のモデルファイルがあれば未設定の入力欄にセットする。"""
+        models_dir = APP_DIR / "models"
+        pose_default = models_dir / "pose_landmarker_full.task"
+        hand_default = models_dir / "hand_landmarker.task"
+        if not self._pose_model_var.get() and pose_default.exists():
+            self._pose_model_var.set(str(pose_default))
+        if not self._hand_model_var.get() and hand_default.exists():
+            self._hand_model_var.set(str(hand_default))
 
     def _on_close(self):
         self._save_config()

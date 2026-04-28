@@ -72,9 +72,18 @@ Python 3.10 以上を推奨。
 pip install mediapipe opencv-python numpy pandas scipy matplotlib Pillow av
 ```
 
-MediaPipe のモデルファイル（`.task`）は別途ダウンロードしてください：
+MediaPipe のモデルファイル（`.task`）は別途ダウンロードし、`models/` フォルダに配置してください：
 - [pose_landmarker_full.task](https://developers.google.com/mediapipe/solutions/vision/pose_landmarker)
 - [hand_landmarker.task](https://developers.google.com/mediapipe/solutions/vision/hand_landmarker)
+
+```
+apraxia-analysis-main/
+└── models/
+    ├── pose_landmarker_full.task   ← Pose モデル
+    └── hand_landmarker.task        ← Hand モデル（byebye / comehere 用）
+```
+
+`models/` フォルダに上記のファイル名で配置すると、アプリ起動時に自動でセットされます。
 
 ## 使い方
 
