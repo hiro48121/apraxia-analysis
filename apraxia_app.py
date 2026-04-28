@@ -641,7 +641,7 @@ class ApraxiaApp(tk.Tk):
 
         try:
             cmd = [
-                PYTHON, "-m", "apraxia_analysis.main",
+                PYTHON, "-u", "-m", "apraxia_analysis.main",
                 "--task",           task,
                 "--video",          video_path,
                 "--pose_model",     self._pose_model_var.get(),
