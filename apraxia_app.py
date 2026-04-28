@@ -30,7 +30,7 @@ from tkinter import filedialog, messagebox, scrolledtext, ttk
 # ─────────────────────────────────────────────────────────────
 
 # .venv の python インタープリタ
-PYTHON = str(Path.home() / "Desktop" / "hammer_project" / ".venv" / "bin" / "python")
+PYTHON = sys.executable
 
 # このファイルがある場所 = apraxia_analysis/ の親ディレクトリ
 APP_DIR = Path(__file__).parent
