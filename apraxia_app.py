@@ -202,9 +202,13 @@ class ApraxiaApp(tk.Tk):
                    lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfig(win_id, width=e.width))
-        # マウスホイールでスクロール
+        # マウスホイールでスクロール（Windows/Mac: MouseWheel、Linux: Button-4/5）
         canvas.bind_all("<MouseWheel>",
                         lambda e: canvas.yview_scroll(int(-1 * e.delta / 120), "units"))
+        canvas.bind_all("<Button-4>",
+                        lambda e: canvas.yview_scroll(-1, "units"))
+        canvas.bind_all("<Button-5>",
+                        lambda e: canvas.yview_scroll(1, "units"))
 
         self._build_right(right, BG, ACCENT)
 
