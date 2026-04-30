@@ -654,6 +654,11 @@ class ApraxiaApp(tk.Tk):
         src = _Path(video_path)
         dst = src.with_name(src.stem + "_h264.mp4")
 
+        # 保存先パスに非ASCII文字が含まれる場合はアプリフォルダ直下に保存
+        # （PyAV/libav は日本語等の非ASCIIパスへの書き込みに失敗するため）
+        if not str(dst).isascii():
+            dst = APP_DIR / dst.name
+
         # 変換済みファイルが既に存在し OpenCV で読める場合は再変換をスキップ
         if dst.exists():
             cap, opened, _ = self._open_cap_with_timeout(str(dst), timeout=8.0)
