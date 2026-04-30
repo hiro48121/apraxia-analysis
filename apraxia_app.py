@@ -45,6 +45,14 @@ CONFIG_PATH = Path.home() / ".apraxia_app_config.json"
 TASKS = ["hammer", "byebye", "comehere"]
 SIDES = ["Left", "Right"]
 
+# フォント（OS別：Windows は日本語対応フォントを明示指定）
+if sys.platform == "win32":
+    FONT_UI   = "Yu Gothic UI"   # Windows 8.1+
+    FONT_MONO = "MS Gothic"      # 日本語対応等幅フォント
+else:
+    FONT_UI   = "Helvetica Neue"
+    FONT_MONO = "Courier"
+
 # summary.csv のうち画面に表示する列（タスク共通 + タスク別）
 SUMMARY_KEYS_COMMON = [
     "participant_id", "task", "set_id", "trial_id", "side",
@@ -138,18 +146,18 @@ class ApraxiaApp(tk.Tk):
         style.theme_use("clam")
         style.configure("TFrame",         background=BG)
         style.configure("Surface.TFrame", background=SURFACE)
-        style.configure("TLabel",         background=BG, font=("Helvetica Neue", 13))
-        style.configure("TButton",        font=("Helvetica Neue", 13), padding=5)
-        style.configure("TRadiobutton",   background=BG, font=("Helvetica Neue", 13))
-        style.configure("TEntry",         font=("Helvetica Neue", 13), padding=4)
+        style.configure("TLabel",         background=BG, font=(FONT_UI, 13))
+        style.configure("TButton",        font=(FONT_UI, 13), padding=5)
+        style.configure("TRadiobutton",   background=BG, font=(FONT_UI, 13))
+        style.configure("TEntry",         font=(FONT_UI, 13), padding=4)
         style.configure("TLabelframe",    background=BG)
         style.configure("TLabelframe.Label",
-                        background=BG, font=("Helvetica Neue", 12, "bold"))
+                        background=BG, font=(FONT_UI, 12, "bold"))
 
         # アクセントボタン
         style.configure("Accent.TButton",
                         background=ACCENT, foreground="white",
-                        font=("Helvetica Neue", 14, "bold"), padding=10)
+                        font=(FONT_UI, 14, "bold"), padding=10)
         style.map("Accent.TButton",
                   background=[("active", "#1e4070"), ("disabled", "#9ab0cc")],
                   foreground=[("disabled", "#e0e8f4")])
@@ -159,9 +167,9 @@ class ApraxiaApp(tk.Tk):
         header.pack(fill="x")
         header.pack_propagate(False)
         tk.Label(header, text="APRAXIA ANALYSIS", bg=HEADER, fg="#f5f2ee",
-                 font=("Courier", 15, "bold")).pack(side="left", padx=22, pady=12)
+                 font=(FONT_MONO, 15, "bold")).pack(side="left", padx=22, pady=12)
         tk.Label(header, text="v1.0", bg="#2a2a2a", fg="#888",
-                 font=("Courier", 10)).pack(side="left", pady=12)
+                 font=(FONT_MONO, 10)).pack(side="left", pady=12)
 
         # ── メインレイアウト ──
         main = ttk.Frame(self, padding=12)
@@ -214,7 +222,7 @@ class ApraxiaApp(tk.Tk):
             drop_frame,
             text="動画ファイルを選択してください\n（MOV / MP4 / AVI）",
             bg=surface2, fg="#6b5f52",
-            font=("Helvetica Neue", 13),
+            font=(FONT_UI, 13),
             pady=16, wraplength=400,
         )
         self._video_label.pack(side="left", padx=14, expand=True)
@@ -228,13 +236,13 @@ class ApraxiaApp(tk.Tk):
         self._preview_label = tk.Label(
             self._preview_frame, bg=surface, fg="#9e9088",
             text="解析後にここに波形グラフが表示されます",
-            font=("Helvetica Neue", 12),
+            font=(FONT_UI, 12),
         )
         self._preview_label.pack(expand=True, fill="both")
 
         self._video_info_label = tk.Label(
             self._preview_frame, bg=surface, fg="#555555",
-            text="", font=("Helvetica Neue", 11),
+            text="", font=(FONT_UI, 11),
         )
         self._video_info_label.pack(side="bottom", pady=(0, 4))
 
@@ -244,7 +252,7 @@ class ApraxiaApp(tk.Tk):
 
         self._log = scrolledtext.ScrolledText(
             log_lf, height=8,
-            font=("Courier", 11),
+            font=(FONT_MONO, 11),
             bg="#1a1612", fg="#d0ccc6",
             insertbackground="white",
             relief="flat", state="disabled",
@@ -337,7 +345,7 @@ class ApraxiaApp(tk.Tk):
         res_lf.pack(fill="x", pady=(0, 4))
         self._result_text = tk.Text(
             res_lf, height=16,
-            font=("Courier", 11),
+            font=(FONT_MONO, 11),
             bg="#f0ece6", fg="#1a1612",
             relief="flat", state="disabled", wrap="none",
         )
