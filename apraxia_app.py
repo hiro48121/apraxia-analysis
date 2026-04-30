@@ -659,8 +659,9 @@ class ApraxiaApp(tk.Tk):
         if not str(dst).isascii():
             dst = APP_DIR / dst.name
 
-        # 変換済みファイルが既に存在し OpenCV で読める場合は再変換をスキップ
-        if dst.exists():
+        # 変換済みファイルが既に存在し、十分なサイズで OpenCV で読める場合はスキップ
+        # （1MB未満は変換途中の不完全ファイルと判断して再変換する）
+        if dst.exists() and dst.stat().st_size > 1024 * 1024:
             cap, opened, _ = self._open_cap_with_timeout(str(dst), timeout=8.0)
             if cap:
                 try:
@@ -673,17 +674,33 @@ class ApraxiaApp(tk.Tk):
                 return str(dst)
 
         try:
+            import itertools as _it
             with av.open(str(src)) as inp:
+                in_stream = inp.streams.video[0]
+
+                # フレームレート正規化（0や不正値は30fpsにフォールバック）
+                rate = in_stream.average_rate
+                if not rate or float(rate) <= 0:
+                    rate = 30
+
+                # 解像度はストリームヘッダではなく最初のフレームから取得
+                # （HEVCではヘッダの値が不正なことがあるため）
+                frames_iter = inp.decode(video=0)
+                first_frame = next(frames_iter, None)
+                if first_frame is None:
+                    raise RuntimeError("動画からフレームを取得できません")
+                # libx264 は偶数解像度が必要
+                width  = (first_frame.width  // 2) * 2
+                height = (first_frame.height // 2) * 2
+
                 with av.open(str(dst), "w") as out:
-                    in_stream = inp.streams.video[0]
-                    out_stream = out.add_stream(
-                        "libx264", rate=in_stream.average_rate)
-                    out_stream.width   = in_stream.width
-                    out_stream.height  = in_stream.height
+                    out_stream = out.add_stream("libx264", rate=rate)
+                    out_stream.width   = width
+                    out_stream.height  = height
                     out_stream.pix_fmt = "yuv420p"
-                    for frame in inp.decode(video=0):
-                        # iPhoneのHEVC等は10bitフォーマットのためlibx264用に変換
-                        frame = frame.reformat(format="yuv420p")
+                    for frame in _it.chain([first_frame], frames_iter):
+                        frame = frame.reformat(
+                            width=width, height=height, format="yuv420p")
                         for pkt in out_stream.encode(frame):
                             out.mux(pkt)
                     for pkt in out_stream.encode():
