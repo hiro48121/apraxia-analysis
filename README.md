@@ -49,7 +49,8 @@ byebye / comehere 固有：
 ```
 .
 ├── apraxia_app.py            # デスクトップGUI（tkinter）★現在の推奨起動方法
-├── apraxia_app.command       # macOS ダブルクリック起動用ランチャー
+├── apraxia_app.command       # ダブルクリック起動用ランチャー（macOS 専用）
+├── apraxia_app.bat           # ダブルクリック起動用ランチャー（Windows 専用）
 ├── apraxia_analysis/         # 解析モジュール（パッケージ）
 │   ├── main.py               # CLI エントリポイント
 │   ├── core/                 # 全タスク共通モジュール
@@ -93,7 +94,14 @@ apraxia-analysis-main/
 python apraxia_app.py
 ```
 
-macOS の場合は `apraxia_app.command` をダブルクリックでも起動できます。
+ダブルクリックで起動するランチャーも用意されています：
+
+| OS | ファイル | 操作 |
+|----|---------|------|
+| macOS | `apraxia_app.command` | ターミナルから `chmod +x apraxia_app.command` を実行後、ダブルクリック |
+| Windows | `apraxia_app.bat` | ダブルクリック |
+
+> **macOS の初回起動時**: Gatekeeper によりブロックされる場合は、右クリック →「開く」を選択してください。
 
 ### B. コマンドライン
 
