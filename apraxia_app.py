@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-apraxia_app.py  —  Apraxia Analysis Desktop App (最小構成)
+apraxia_app.py  —  Apraxia Analysis Desktop App
 
 起動方法 (ターミナル):
-  ~/Desktop/hammer_project/.venv/bin/python apraxia_app.py
+  python apraxia_app.py
 
 起動方法 (ダブルクリック):
-  apraxia_app.command  をダブルクリック
+  macOS:   apraxia_app.command をダブルクリック
+  Windows: apraxia_app.bat     をダブルクリック
 
 注意:
   - このファイルは apraxia_analysis/ フォルダと同じ場所に置いてください
