@@ -676,44 +676,45 @@ class ApraxiaApp(tk.Tk):
                            f"[変換スキップ] 変換済みファイルを使用: {dst.name}")
                 return str(dst)
 
-        # PyAV/libav はスペースや特殊文字を含むパスへの書き込みに失敗する場合があるため、
-        # まず /tmp 以下の単純なパスに変換してから最終保存先へ移動する
-        tmp_fd, tmp_path_str = _tempfile.mkstemp(suffix=".mp4", prefix="apraxia_")
-        tmp_path = _Path(tmp_path_str)
+        # PyAV(読み込み) + OpenCV(書き込み) でHEVC→H.264変換
+        # PyAVのlibx264エンコードはmacOS環境で失敗するケースがあるため
+        # 書き込みはOpenCV(VideoToolbox)を使用する
+        import uuid as _uuid
+        import cv2 as _cv2
+        tmp_path = _Path(_tempfile.gettempdir()) / f"apraxia_{_uuid.uuid4().hex}.mp4"
+        writer = None
         try:
-            import os as _os
-            _os.close(tmp_fd)
-
             with av.open(str(src)) as inp:
                 in_stream = inp.streams.video[0]
+                rate = float(in_stream.average_rate or 30)
 
-                # フレームレート正規化（0や不正値は30fpsにフォールバック）
-                rate = in_stream.average_rate
-                if not rate or float(rate) <= 0:
-                    rate = 30
-
-                # 解像度はストリームヘッダではなく最初のフレームから取得
-                # （HEVCではヘッダの値が不正なことがあるため）
                 frames_iter = inp.decode(video=0)
                 first_frame = next(frames_iter, None)
                 if first_frame is None:
                     raise RuntimeError("動画からフレームを取得できません")
-                # libx264 は偶数解像度が必要
                 width  = (first_frame.width  // 2) * 2
                 height = (first_frame.height // 2) * 2
 
-                with av.open(str(tmp_path), "w") as out:
-                    out_stream = out.add_stream("libx264", rate=rate)
-                    out_stream.width   = width
-                    out_stream.height  = height
-                    out_stream.pix_fmt = "yuv420p"
-                    for frame in _it.chain([first_frame], frames_iter):
-                        frame = frame.reformat(
-                            width=width, height=height, format="yuv420p")
-                        for pkt in out_stream.encode(frame):
-                            out.mux(pkt)
-                    for pkt in out_stream.encode():
-                        out.mux(pkt)
+                # macOSはavc1(H.264)、フォールバックはmp4v
+                for fourcc_str in ("avc1", "mp4v"):
+                    fourcc = _cv2.VideoWriter_fourcc(*fourcc_str)
+                    writer = _cv2.VideoWriter(
+                        str(tmp_path), fourcc, rate, (width, height))
+                    if writer.isOpened():
+                        break
+                    writer.release()
+                    writer = None
+                if writer is None:
+                    raise RuntimeError("H.264エンコーダーが利用できません")
+
+                for frame in _it.chain([first_frame], frames_iter):
+                    img = frame.to_ndarray(format="bgr24")
+                    if img.shape[1] != width or img.shape[0] != height:
+                        img = _cv2.resize(img, (width, height))
+                    writer.write(img)
+
+            writer.release()
+            writer = None
 
             # 変換成功 → 最終保存先へ移動
             _shutil.move(str(tmp_path), str(dst))
@@ -726,7 +727,11 @@ class ApraxiaApp(tk.Tk):
                 text=f"選択済: {dst_name}（H.264 変換済）"))
             return str(dst)
         except Exception as e:
-            # 一時ファイルが残っている場合は削除
+            if writer is not None:
+                try:
+                    writer.release()
+                except Exception:
+                    pass
             if tmp_path is not None:
                 try:
                     tmp_path.unlink(missing_ok=True)
