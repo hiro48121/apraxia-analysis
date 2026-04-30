@@ -606,16 +606,31 @@ class ApraxiaApp(tk.Tk):
         """OpenCV で読めない動画（HEVC/H.265 等）を H.264 MP4 に変換する。
         バックグラウンドスレッドから呼ぶこと（UI はブロックしない）。
         成功時は使用すべきパス文字列、失敗時は None を返す。"""
-        cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=8.0)
-        if cap:
-            try:
-                cap.release()
-            except Exception:
-                pass
-        if opened:
-            return video_path
+        # PyAV でコーデックを直接確認。HEVC なら OpenCV テストをスキップして即変換
+        # （OpenCV は1フレーム目だけ読めるHEVC動画を誤って「読める」と判定し、
+        #   サブプロセスで全フレーム読み込み時にフリーズする問題を回避するため）
+        is_hevc = False
+        try:
+            import av as _av_check
+            with _av_check.open(video_path) as _f:
+                is_hevc = _f.streams.video[0].codec_context.name.lower() in (
+                    "hevc", "h265", "hvc1")
+        except Exception:
+            pass
 
-        reason = "タイムアウト（HEVC/H.265の可能性）" if timed_out else "読み込みエラー"
+        if not is_hevc:
+            cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=8.0)
+            if cap:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            if opened:
+                return video_path
+            reason = "タイムアウト（HEVC/H.265の可能性）" if timed_out else "読み込みエラー"
+        else:
+            reason = "HEVC（H.265）形式を検出"
+
         self.after(0, self._log_write,
                    f"[変換] OpenCV で読めない動画を検出（{reason}）。H.264 に自動変換します...")
         try:
