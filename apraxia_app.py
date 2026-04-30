@@ -650,12 +650,15 @@ class ApraxiaApp(tk.Tk):
             ))
             return None
 
+        import itertools as _it
+        import shutil as _shutil
+        import tempfile as _tempfile
         from pathlib import Path as _Path
+
         src = _Path(video_path)
         dst = src.with_name(src.stem + "_h264.mp4")
 
-        # 保存先パスに非ASCII文字が含まれる場合はアプリフォルダ直下に保存
-        # （PyAV/libav は日本語等の非ASCIIパスへの書き込みに失敗するため）
+        # 最終保存先：非ASCII文字が含まれる場合はアプリフォルダ直下に変更
         if not str(dst).isascii():
             dst = APP_DIR / dst.name
 
@@ -673,8 +676,14 @@ class ApraxiaApp(tk.Tk):
                            f"[変換スキップ] 変換済みファイルを使用: {dst.name}")
                 return str(dst)
 
+        # PyAV/libav はスペースや特殊文字を含むパスへの書き込みに失敗する場合があるため、
+        # まず /tmp 以下の単純なパスに変換してから最終保存先へ移動する
+        tmp_fd, tmp_path_str = _tempfile.mkstemp(suffix=".mp4", prefix="apraxia_")
+        tmp_path = _Path(tmp_path_str)
         try:
-            import itertools as _it
+            import os as _os
+            _os.close(tmp_fd)
+
             with av.open(str(src)) as inp:
                 in_stream = inp.streams.video[0]
 
@@ -693,7 +702,7 @@ class ApraxiaApp(tk.Tk):
                 width  = (first_frame.width  // 2) * 2
                 height = (first_frame.height // 2) * 2
 
-                with av.open(str(dst), "w") as out:
+                with av.open(str(tmp_path), "w") as out:
                     out_stream = out.add_stream("libx264", rate=rate)
                     out_stream.width   = width
                     out_stream.height  = height
@@ -706,6 +715,10 @@ class ApraxiaApp(tk.Tk):
                     for pkt in out_stream.encode():
                         out.mux(pkt)
 
+            # 変換成功 → 最終保存先へ移動
+            _shutil.move(str(tmp_path), str(dst))
+            tmp_path = None
+
             dst_name = dst.name
             self.after(0, self._log_write,
                        f"[変換完了] {dst_name} として保存しました")
@@ -713,6 +726,12 @@ class ApraxiaApp(tk.Tk):
                 text=f"選択済: {dst_name}（H.264 変換済）"))
             return str(dst)
         except Exception as e:
+            # 一時ファイルが残っている場合は削除
+            if tmp_path is not None:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             err = str(e)
             self.after(0, self._log_write, f"[変換エラー] {err}")
             self.after(0, lambda: messagebox.showerror("動画変換エラー", err))
