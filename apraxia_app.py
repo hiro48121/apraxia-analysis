@@ -639,6 +639,19 @@ class ApraxiaApp(tk.Tk):
         src = _Path(video_path)
         dst = src.with_name(src.stem + "_h264.mp4")
 
+        # 変換済みファイルが既に存在し OpenCV で読める場合は再変換をスキップ
+        if dst.exists():
+            cap, opened, _ = self._open_cap_with_timeout(str(dst), timeout=8.0)
+            if cap:
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+            if opened:
+                self.after(0, self._log_write,
+                           f"[変換スキップ] 変換済みファイルを使用: {dst.name}")
+                return str(dst)
+
         try:
             with av.open(str(src)) as inp:
                 with av.open(str(dst), "w") as out:
@@ -649,6 +662,8 @@ class ApraxiaApp(tk.Tk):
                     out_stream.height  = in_stream.height
                     out_stream.pix_fmt = "yuv420p"
                     for frame in inp.decode(video=0):
+                        # iPhoneのHEVC等は10bitフォーマットのためlibx264用に変換
+                        frame = frame.reformat(format="yuv420p")
                         for pkt in out_stream.encode(frame):
                             out.mux(pkt)
                     for pkt in out_stream.encode():
@@ -662,6 +677,7 @@ class ApraxiaApp(tk.Tk):
             return str(dst)
         except Exception as e:
             err = str(e)
+            self.after(0, self._log_write, f"[変換エラー] {err}")
             self.after(0, lambda: messagebox.showerror("動画変換エラー", err))
             return None
 
