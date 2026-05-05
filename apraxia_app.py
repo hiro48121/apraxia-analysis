@@ -315,6 +315,15 @@ class ApraxiaApp(tk.Tk):
             ttk.Label(row, text=label, width=13).pack(side="left")
             ttk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
 
+        ttk.Label(
+            info_lf,
+            text="※ 本研究では動画開始時点をCueフレームとするため、通常は0のまま使用してください。",
+            font=(FONT_UI, 10),
+            foreground="#6b5f52",
+            wraplength=220,
+            justify="left",
+        ).pack(anchor="w", pady=(4, 0))
+
         # ── モデルファイル ──
         model_lf = ttk.LabelFrame(parent, text="モデルファイル", padding=8)
         model_lf.pack(fill="x", pady=(0, 6))
