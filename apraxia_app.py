@@ -561,6 +561,23 @@ class ApraxiaApp(tk.Tk):
 
     def _load_video_preview(self, video_path: str):
         """動画選択直後にプレビューフレームと動画情報を表示する（バックグラウンドスレッド）。"""
+        # PyAV でコーデックを直接確認（インストール済みの場合）
+        is_hevc = False
+        try:
+            import av as _av_check
+            with _av_check.open(video_path) as _f:
+                is_hevc = _f.streams.video[0].codec_context.name.lower() in (
+                    "hevc", "h265", "hvc1")
+        except Exception:
+            pass
+
+        if is_hevc:
+            msg = "⚠ HEVC（H.265）形式です\n解析時に自動的にH.264へ変換されます"
+            self.after(0, lambda: self._video_info_label.config(text=msg, fg="#b85c00"))
+            self.after(0, lambda: self._preview_label.config(
+                text="プレビュー不可（HEVC形式）", fg="#9e9088"))
+            return
+
         cap, opened, timed_out = self._open_cap_with_timeout(video_path, timeout=8.0)
 
         if timed_out or not opened:
