@@ -125,6 +125,15 @@ class ApraxiaApp(tk.Tk):
         self._video_path: str = ""
         self._running = False
 
+        # ── 動画プレーヤー状態 ──
+        self._player_cap = None          # cv2.VideoCapture（再生中は開いたまま）
+        self._player_total_frames: int = 0
+        self._player_fps: float = 30.0
+        self._player_current_frame: int = 0
+        self._player_playing: bool = False
+        self._player_after_id = None
+        self._player_slider_busy: bool = False
+
         self._build_ui()
         self._restore_values()
         self._apply_default_models()
@@ -251,9 +260,12 @@ class ApraxiaApp(tk.Tk):
         )
         self._video_info_label.pack(side="bottom", pady=(0, 4))
 
+        # プレーヤーコントロール
+        self._build_player_controls(parent, surface, surface2)
+
         # ログ
         log_lf = ttk.LabelFrame(parent, text="ログ", padding=4)
-        log_lf.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        log_lf.grid(row=3, column=0, sticky="ew", pady=(8, 0))
 
         self._log = scrolledtext.ScrolledText(
             log_lf, height=8,
@@ -369,6 +381,7 @@ class ApraxiaApp(tk.Tk):
             ],
         )
         if path:
+            self._player_reset()
             self._video_path = path
             self._video_label.config(
                 text=f"選択済: {Path(path).name}",
@@ -438,6 +451,8 @@ class ApraxiaApp(tk.Tk):
         if self._running:
             messagebox.showinfo("解析中", "現在解析中です。完了をお待ちください。")
             return
+
+        self._player_stop()
 
         # ── バリデーション ──
         if not self._video_path:
@@ -577,6 +592,9 @@ class ApraxiaApp(tk.Tk):
         if ret:
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             self.after(0, lambda f=frame_rgb: self._display_frame_preview(f))
+            # プレーヤーを初期化（既にOpenCVで読めることが確認済みのためここで実施）
+            self.after(0, lambda p=video_path, n=int(n_frames), r=fps:
+                       self._player_init(p, n, r))
         else:
             self.after(0, lambda: self._preview_label.config(
                 text="フレーム取得失敗", fg="#9e9088"))
@@ -598,6 +616,192 @@ class ApraxiaApp(tk.Tk):
                 text="プレビュー不可\n(Pillow 未インストール)", image="", fg="#9e9088")
         except Exception as e:
             self._preview_label.config(text=f"プレビューエラー:\n{e}", image="", fg="#9e9088")
+
+    # ──────────────────────────────────────────────────────────
+    #  動画プレーヤー
+    # ──────────────────────────────────────────────────────────
+
+    def _build_player_controls(self, parent, surface, surface2):
+        """再生・停止・コマ送り・シーク UI を row=2 に構築する。"""
+        ctrl = tk.Frame(parent, bg=surface2)
+        ctrl.grid(row=2, column=0, sticky="ew", pady=(2, 0))
+        ctrl.columnconfigure(0, weight=1)
+
+        # フレーム情報ラベル（左寄せ）
+        self._player_info_label = tk.Label(
+            ctrl,
+            text="-- / --  |  0.00s / 0.00s",
+            bg=surface2, fg="#444444",
+            font=(FONT_MONO, 10),
+        )
+        self._player_info_label.grid(row=0, column=0, sticky="w", padx=8, pady=(4, 0))
+
+        # シークスライダー
+        self._player_slider = ttk.Scale(
+            ctrl, from_=0, to=100, orient="horizontal",
+            command=self._player_on_slider_moved,
+        )
+        self._player_slider.grid(row=1, column=0, sticky="ew", padx=6, pady=2)
+
+        # ボタン行
+        btn_row = tk.Frame(ctrl, bg=surface2)
+        btn_row.grid(row=2, column=0, pady=(0, 4))
+
+        self._player_prev_btn = ttk.Button(
+            btn_row, text="◀◀", width=4,
+            command=lambda: self._player_step(-1),
+        )
+        self._player_prev_btn.pack(side="left", padx=2)
+
+        self._player_play_btn = ttk.Button(
+            btn_row, text="▶ 再生", width=7,
+            command=self._player_play,
+        )
+        self._player_play_btn.pack(side="left", padx=2)
+
+        self._player_stop_btn = ttk.Button(
+            btn_row, text="■ 停止", width=7,
+            command=self._player_stop,
+        )
+        self._player_stop_btn.pack(side="left", padx=2)
+
+        self._player_next_btn = ttk.Button(
+            btn_row, text="▶▶", width=4,
+            command=lambda: self._player_step(1),
+        )
+        self._player_next_btn.pack(side="left", padx=2)
+
+        # 初期状態：コントロール無効
+        self._player_set_controls_state("disabled")
+
+    def _player_reset(self):
+        """再生を停止し VideoCapture を解放する。動画変更・終了時に呼ぶ。"""
+        self._player_stop()
+        if self._player_cap is not None:
+            try:
+                self._player_cap.release()
+            except Exception:
+                pass
+            self._player_cap = None
+        self._player_total_frames = 0
+        self._player_current_frame = 0
+        self._player_fps = 30.0
+        self._player_set_controls_state("disabled")
+        self._player_info_label.config(text="-- / --  |  0.00s / 0.00s")
+        self._player_slider_busy = True
+        self._player_slider.config(to=100)
+        self._player_slider.set(0)
+        self._player_slider_busy = False
+
+    def _player_init(self, video_path: str, total_frames: int, fps: float):
+        """動画が読み込み可能と確認された後、メインスレッドから呼んでプレーヤーを初期化する。"""
+        import cv2
+        self._player_reset()
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return
+        self._player_cap = cap
+        self._player_total_frames = max(1, total_frames)
+        self._player_fps = fps if fps > 0 else 30.0
+        self._player_current_frame = 0
+        self._player_slider_busy = True
+        self._player_slider.config(to=self._player_total_frames - 1)
+        self._player_slider.set(0)
+        self._player_slider_busy = False
+        self._player_update_info()
+        self._player_set_controls_state("normal")
+
+    def _player_set_controls_state(self, state: str):
+        for w in (self._player_play_btn, self._player_stop_btn,
+                  self._player_prev_btn, self._player_next_btn,
+                  self._player_slider):
+            w.config(state=state)
+
+    def _player_update_info(self):
+        cur   = self._player_current_frame
+        total = self._player_total_frames
+        fps   = self._player_fps
+        cur_t   = cur   / fps if fps > 0 else 0.0
+        total_t = total / fps if fps > 0 else 0.0
+        self._player_info_label.config(
+            text=f"Frame {cur + 1} / {total}  |  {cur_t:.2f}s / {total_t:.2f}s"
+        )
+
+    def _player_play(self):
+        if self._player_cap is None or self._player_playing:
+            return
+        import cv2
+        # 末尾に達していたら先頭から再生
+        if self._player_current_frame >= self._player_total_frames - 1:
+            self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            self._player_current_frame = 0
+        self._player_playing = True
+        self._player_loop()
+
+    def _player_stop(self):
+        self._player_playing = False
+        if self._player_after_id is not None:
+            try:
+                self.after_cancel(self._player_after_id)
+            except Exception:
+                pass
+            self._player_after_id = None
+
+    def _player_loop(self):
+        """after() で繰り返し呼ばれる再生ループ。"""
+        if not self._player_playing or self._player_cap is None:
+            return
+        import cv2
+        ret, frame = self._player_cap.read()
+        if not ret:
+            self._player_playing = False
+            self._player_current_frame = max(0, self._player_total_frames - 1)
+            self._player_update_info()
+            return
+        self._player_current_frame = (
+            int(self._player_cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        )
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        self._display_frame_preview(frame_rgb)
+        self._player_slider_busy = True
+        self._player_slider.set(self._player_current_frame)
+        self._player_slider_busy = False
+        self._player_update_info()
+        delay = max(1, int(1000 / self._player_fps))
+        self._player_after_id = self.after(delay, self._player_loop)
+
+    def _player_step(self, delta: int):
+        """1 フレームずつ前後移動。"""
+        if self._player_cap is None:
+            return
+        self._player_stop()
+        target = max(0, min(self._player_total_frames - 1,
+                            self._player_current_frame + delta))
+        self._player_seek_to(target)
+
+    def _player_seek_to(self, frame_num: int):
+        """指定フレームへシークして表示する。"""
+        import cv2
+        if self._player_cap is None:
+            return
+        frame_num = max(0, min(self._player_total_frames - 1, frame_num))
+        self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, frame = self._player_cap.read()
+        if ret:
+            self._player_current_frame = frame_num
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            self._display_frame_preview(frame_rgb)
+            self._player_slider_busy = True
+            self._player_slider.set(frame_num)
+            self._player_slider_busy = False
+            self._player_update_info()
+
+    def _player_on_slider_moved(self, val):
+        """ユーザーがスライダーを操作したときのコールバック。"""
+        if self._player_slider_busy or self._player_cap is None:
+            return
+        self._player_stop()
+        self._player_seek_to(int(float(val)))
 
     # ──────────────────────────────────────────────────────────
     #  HEVC → H.264 自動変換（バックグラウンドスレッド内で呼ぶこと）
@@ -896,6 +1100,7 @@ class ApraxiaApp(tk.Tk):
 
     def _on_close(self):
         self._save_config()
+        self._player_reset()
         self.destroy()
 
 
