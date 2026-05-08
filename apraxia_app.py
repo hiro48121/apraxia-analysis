@@ -456,6 +456,58 @@ class ApraxiaApp(tk.Tk):
     #  解析実行
     # ──────────────────────────────────────────────────────────
 
+    def _confirm_cue_frame(self, cue_val: int) -> str:
+        """Cueフレームが0以外のとき確認ダイアログを表示し、結果を返す。
+
+        Returns: "proceed" / "reset" / "cancel"
+        """
+        result = {"value": "cancel"}
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Cueフレームの確認")
+        dlg.resizable(False, False)
+        dlg.grab_set()
+
+        msg = (
+            f"Cueフレームが0以外に設定されています。\n\n"
+            f"本研究では通常 cue_frame = 0 を使用します。\n"
+            f"このまま解析を実行しますか？\n\n"
+            f"現在のCueフレーム：{cue_val}"
+        )
+        ttk.Label(dlg, text=msg, padding=16, wraplength=320, justify="left").pack()
+
+        btn_frame = ttk.Frame(dlg, padding=(12, 0, 12, 12))
+        btn_frame.pack()
+
+        def on_proceed():
+            result["value"] = "proceed"
+            dlg.destroy()
+
+        def on_reset():
+            result["value"] = "reset"
+            dlg.destroy()
+
+        def on_cancel():
+            result["value"] = "cancel"
+            dlg.destroy()
+
+        ttk.Button(btn_frame, text="このまま解析する", command=on_proceed).pack(
+            side="left", padx=4)
+        ttk.Button(btn_frame, text="0に戻す", command=on_reset).pack(
+            side="left", padx=4)
+        ttk.Button(btn_frame, text="キャンセル", command=on_cancel).pack(
+            side="left", padx=4)
+
+        dlg.update_idletasks()
+        w = dlg.winfo_reqwidth()
+        h = dlg.winfo_reqheight()
+        x = self.winfo_rootx() + (self.winfo_width() - w) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - h) // 2
+        dlg.geometry(f"+{x}+{y}")
+
+        self.wait_window(dlg)
+        return result["value"]
+
     def _start_analysis(self):
         if self._running:
             messagebox.showinfo("解析中", "現在解析中です。完了をお待ちください。")
@@ -510,6 +562,21 @@ class ApraxiaApp(tk.Tk):
                     "\n\n英数字のみのパスに変更してから再度お試しください。"
                 )
                 return
+
+        # ── Cueフレーム確認ダイアログ ──
+        cue_raw = self._cue_var.get().strip()
+        try:
+            cue_val = int(cue_raw)
+        except ValueError:
+            cue_val = 0
+        if cue_val != 0:
+            action = self._confirm_cue_frame(cue_val)
+            if action == "cancel":
+                self._log_write("Cueフレーム確認により解析をキャンセルしました。")
+                return
+            if action == "reset":
+                self._cue_var.set("0")
+                self._log_write("Cueフレームを0に戻して解析を開始しました。")
 
         pid = self._pid_var.get().strip() or "noname"
 
