@@ -125,6 +125,11 @@ class ApraxiaApp(tk.Tk):
         self._video_path: str = ""
         self._running = False
 
+        # ── オーバーレイ動画生成状態 ──
+        self._last_trial_out: str = ""
+        self._last_task: str = ""
+        self._overlay_running: bool = False
+
         # ── 動画プレーヤー状態 ──
         self._player_cap = None          # cv2.VideoCapture（再生中は開いたまま）
         self._player_total_frames: int = 0
@@ -365,6 +370,13 @@ class ApraxiaApp(tk.Tk):
             command=self._start_analysis,
         )
         self._analyze_btn.pack(fill="x", pady=(6, 8))
+
+        # ── オーバーレイ動画作成ボタン ──
+        self._overlay_btn = ttk.Button(
+            parent, text="オーバーレイ動画を作成",
+            command=self._start_overlay,
+        )
+        self._overlay_btn.pack(fill="x", pady=(0, 8))
 
         # ── 解析結果 ──
         res_lf = ttk.LabelFrame(parent, text="解析結果サマリ", padding=8)
@@ -1113,6 +1125,8 @@ class ApraxiaApp(tk.Tk):
             self.after(0, self._reset_btn)
 
     def _on_analysis_done(self, task: str, out_dir_str: str):
+        self._last_trial_out = out_dir_str
+        self._last_task = task
         out_dir = Path(out_dir_str)
         self._log_write("")
         self._log_write("=== 解析完了 ===")
@@ -1159,6 +1173,219 @@ class ApraxiaApp(tk.Tk):
     def _reset_btn(self):
         self._running = False
         self._analyze_btn.configure(state="normal", text="解析開始 ▶")
+
+    # ──────────────────────────────────────────────────────────
+    #  オーバーレイ動画生成
+    # ──────────────────────────────────────────────────────────
+
+    def _start_overlay(self):
+        if self._overlay_running:
+            messagebox.showinfo("作成中", "オーバーレイ動画を作成中です。完了をお待ちください。")
+            return
+
+        if not self._video_path:
+            messagebox.showerror("エラー", "動画ファイルを選択してください。")
+            return
+        if not Path(self._video_path).exists():
+            messagebox.showerror("エラー", f"動画ファイルが見つかりません:\n{self._video_path}")
+            return
+
+        if not self._last_trial_out:
+            messagebox.showerror(
+                "エラー",
+                "解析結果フォルダが見つかりません。\n"
+                "先に解析を実行してください。",
+            )
+            return
+
+        frames_csv = Path(self._last_trial_out) / "frames.csv"
+        if not frames_csv.exists():
+            messagebox.showerror(
+                "エラー",
+                f"frames.csv が見つかりません:\n{frames_csv}\n\n"
+                "先に解析を実行してください。",
+            )
+            return
+
+        self._overlay_running = True
+        self._overlay_btn.configure(state="disabled", text="オーバーレイ作成中…")
+        self._log_write("")
+        self._log_write("=== オーバーレイ動画作成開始 ===")
+
+        threading.Thread(
+            target=self._make_overlay,
+            args=(self._video_path, str(frames_csv), self._last_trial_out, self._last_task),
+            daemon=True,
+        ).start()
+
+    def _make_overlay(self, video_path: str, frames_csv_path: str,
+                      out_dir_str: str, task: str):
+        try:
+            import cv2  # type: ignore
+        except ImportError:
+            self.after(0, self._log_write, "[エラー] opencv-python がインストールされていません。")
+            self.after(0, self._reset_overlay_btn)
+            return
+
+        try:
+            # ── 動画の読み込み確認（HEVC対応） ──
+            readable_path = self._ensure_readable_video_bg(video_path)
+            if readable_path is None:
+                self.after(0, self._log_write, "[エラー] 動画を読み込めませんでした。")
+                self.after(0, self._reset_overlay_btn)
+                return
+
+            cap = cv2.VideoCapture(readable_path)
+            if not cap.isOpened():
+                self.after(0, self._log_write, f"[エラー] 動画を開けませんでした:\n{readable_path}")
+                self.after(0, self._reset_overlay_btn)
+                return
+
+            fps    = cap.get(cv2.CAP_PROP_FPS) or 30.0
+            width  = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            cap.release()
+
+            # ── frames.csv 読み込み（読み取りのみ） ──
+            frame_data: dict[int, dict] = {}
+            with open(frames_csv_path, newline="", encoding="utf-8") as f:
+                for row in csv.DictReader(f):
+                    try:
+                        fidx = int(float(row.get("frame_idx", -1)))
+                    except (ValueError, TypeError):
+                        continue
+                    frame_data[fidx] = row
+
+            # ── 出力パス ──
+            video_stem = Path(video_path).stem
+            out_path = Path(out_dir_str) / f"overlay_{video_stem}.mp4"
+
+            for fourcc_str in ("avc1", "mp4v"):
+                fourcc = cv2.VideoWriter_fourcc(*fourcc_str)
+                writer = cv2.VideoWriter(str(out_path), fourcc, fps, (width, height))
+                if writer.isOpened():
+                    break
+                writer.release()
+                writer = None
+
+            if writer is None:
+                self.after(0, self._log_write, "[エラー] 動画エンコーダーを初期化できませんでした。")
+                self.after(0, self._reset_overlay_btn)
+                return
+
+            # ── ランドマーク色定義 ──
+            C_SHOULDER   = (255, 180,  50)   # 水色系
+            C_ELBOW      = ( 50, 220, 255)   # 黄色系
+            C_WRIST      = ( 50, 160, 255)   # オレンジ系
+            C_INDEX      = ( 80,  80, 255)   # 赤系
+            C_HAND_EXTRA = (180,  80, 255)   # 紫系（byebye/comehere 追加点）
+            C_BONE       = (200, 200, 200)   # 骨格線：薄灰
+            R_JOINT      = max(6, int(min(width, height) * 0.012))  # 解像度比例半径
+            T_BONE       = max(2, R_JOINT // 3)
+
+            def _px(row: dict, xk: str, yk: str):
+                """float変換。NaN・変換失敗時は None を返す。"""
+                try:
+                    x = float(row[xk])
+                    y = float(row[yk])
+                    if x != x or y != y:   # NaN check
+                        return None
+                    return (int(round(x)), int(round(y)))
+                except (KeyError, ValueError, TypeError):
+                    return None
+
+            def _line(img, p1, p2):
+                if p1 and p2:
+                    cv2.line(img, p1, p2, C_BONE, T_BONE, cv2.LINE_AA)
+
+            def _circle(img, pt, color):
+                if pt:
+                    cv2.circle(img, pt, R_JOINT, color, -1, cv2.LINE_AA)
+                    cv2.circle(img, pt, R_JOINT, (30, 30, 30), 1, cv2.LINE_AA)
+
+            # ── フレームループ ──
+            cap = cv2.VideoCapture(readable_path)
+            frame_idx = 0
+            while True:
+                ok, bgr = cap.read()
+                if not ok:
+                    break
+
+                row = frame_data.get(frame_idx)
+                if row is not None:
+                    sh  = _px(row, "shoulder_x_px",        "shoulder_y_px")
+                    el  = _px(row, "elbow_x_px",           "elbow_y_px")
+                    wr  = _px(row, "wrist_x_px_raw",       "wrist_y_px_raw")
+                    idx = _px(row, "index_x_px",           "index_y_px")
+
+                    # 骨格線（共通）
+                    _line(bgr, sh, el)
+                    _line(bgr, el, wr)
+                    _line(bgr, wr, idx)
+
+                    # 関節点（共通）
+                    _circle(bgr, sh,  C_SHOULDER)
+                    _circle(bgr, el,  C_ELBOW)
+                    _circle(bgr, wr,  C_WRIST)
+                    _circle(bgr, idx, C_INDEX)
+
+                    # byebye / comehere: 手指追加点
+                    if task in ("byebye", "comehere"):
+                        hw  = _px(row, "hand_wrist_x_px",       "hand_wrist_y_px")
+                        mcp = _px(row, "index_mcp_x_px",        "index_mcp_y_px")
+                        pip = _px(row, "index_pip_x_px",        "index_pip_y_px")
+                        tip = _px(row, "hand_index_tip_x_px",   "hand_index_tip_y_px")
+
+                        _line(bgr, hw, mcp)
+                        _line(bgr, mcp, pip)
+                        _line(bgr, pip, tip)
+
+                        _circle(bgr, hw,  C_HAND_EXTRA)
+                        _circle(bgr, mcp, C_HAND_EXTRA)
+                        _circle(bgr, pip, C_HAND_EXTRA)
+                        _circle(bgr, tip, C_HAND_EXTRA)
+
+                    # フレーム情報テキスト
+                    try:
+                        t_s = float(row.get("time_s", frame_idx / fps))
+                    except (ValueError, TypeError):
+                        t_s = frame_idx / fps
+
+                    info_lines = [
+                        f"Frame: {frame_idx}",
+                        f"Time:  {t_s:.2f} s",
+                        f"Task:  {task}",
+                    ]
+                    font_face  = cv2.FONT_HERSHEY_SIMPLEX
+                    font_scale = max(0.5, min(width, height) / 1000.0)
+                    thickness  = max(1, int(font_scale * 2))
+                    pad        = int(height * 0.015)
+                    line_h     = int((cv2.getTextSize("A", font_face, font_scale, thickness)[0][1]) * 1.8)
+                    for i, txt in enumerate(info_lines):
+                        y = pad + line_h * (i + 1)
+                        cv2.putText(bgr, txt, (pad, y), font_face, font_scale,
+                                    (0, 0, 0),       thickness + 2, cv2.LINE_AA)
+                        cv2.putText(bgr, txt, (pad, y), font_face, font_scale,
+                                    (255, 255, 255), thickness,     cv2.LINE_AA)
+
+                writer.write(bgr)
+                frame_idx += 1
+
+            cap.release()
+            writer.release()
+
+            self.after(0, self._log_write, f"=== オーバーレイ動画作成完了 ===")
+            self.after(0, self._log_write, f"保存先: {out_path}")
+
+        except Exception as e:
+            self.after(0, self._log_write, f"[エラー] オーバーレイ動画の作成中に例外が発生しました:\n{e}")
+
+        finally:
+            self.after(0, self._reset_overlay_btn)
+
+    def _reset_overlay_btn(self):
+        self._overlay_running = False
+        self._overlay_btn.configure(state="normal", text="オーバーレイ動画を作成")
 
     # ──────────────────────────────────────────────────────────
     #  設定の保存・復元
