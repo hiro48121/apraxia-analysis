@@ -1369,6 +1369,8 @@ class ApraxiaApp(tk.Tk):
                                     (255, 255, 255), thickness,     cv2.LINE_AA)
 
                 writer.write(bgr)
+                if frame_idx % 50 == 0:
+                    self.after(0, self._log_write, f"  {frame_idx}フレーム処理中...")
                 frame_idx += 1
 
             cap.release()
