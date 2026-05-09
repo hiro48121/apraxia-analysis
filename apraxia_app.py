@@ -726,13 +726,17 @@ class ApraxiaApp(tk.Tk):
     def _display_frame_preview(self, frame_rgb):
         """NumPy 配列（RGB）をプレビューラベルに表示する。"""
         try:
+            import cv2
             from PIL import Image, ImageTk
-            img = Image.fromarray(frame_rgb)
-            self._preview_frame.update_idletasks()
+            src_h, src_w = frame_rgb.shape[:2]
             w = max(200, self._preview_frame.winfo_width() - 20)
             h = max(150, self._preview_frame.winfo_height() - 60)
-            img.thumbnail((w, h), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
+            if src_w > w or src_h > h:
+                scale = min(w / src_w, h / src_h)
+                new_w = max(1, int(src_w * scale))
+                new_h = max(1, int(src_h * scale))
+                frame_rgb = cv2.resize(frame_rgb, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            photo = ImageTk.PhotoImage(Image.fromarray(frame_rgb))
             self._preview_label.config(image=photo, text="")
             self._preview_label.image = photo
         except ImportError:
@@ -1014,13 +1018,24 @@ class ApraxiaApp(tk.Tk):
         self._player_current_frame = (
             int(self._player_cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
         )
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        self._display_frame_preview(frame_rgb)
-        self._player_slider_busy = True
-        self._player_slider.set(self._player_current_frame)
-        self._player_slider_busy = False
-        self._player_update_info()
-        self._update_waveform_cursor(self._player_current_frame)
+        # BGR のまま先にリサイズ → 小画像で色変換（処理量を削減）
+        pw = max(200, self._preview_frame.winfo_width() - 20)
+        ph = max(150, self._preview_frame.winfo_height() - 60)
+        fh, fw = frame.shape[:2]
+        scale = min(pw / fw, ph / fh)
+        nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
+        small_rgb = cv2.cvtColor(
+            cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR),
+            cv2.COLOR_BGR2RGB,
+        )
+        self._display_frame_preview(small_rgb)
+        # スライダー・情報・カーソルは3フレームに1回更新（tkinter負荷を軽減）
+        if self._player_current_frame % 3 == 0:
+            self._player_slider_busy = True
+            self._player_slider.set(self._player_current_frame)
+            self._player_slider_busy = False
+            self._player_update_info()
+            self._update_waveform_cursor(self._player_current_frame)
         delay = max(1, int(1000 / self._player_fps))
         self._player_after_id = self.after(delay, self._player_loop)
 
@@ -1043,8 +1058,16 @@ class ApraxiaApp(tk.Tk):
         ret, frame = self._player_cap.read()
         if ret:
             self._player_current_frame = frame_num
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            self._display_frame_preview(frame_rgb)
+            pw = max(200, self._preview_frame.winfo_width() - 20)
+            ph = max(150, self._preview_frame.winfo_height() - 60)
+            fh, fw = frame.shape[:2]
+            scale = min(pw / fw, ph / fh)
+            nw, nh = max(1, int(fw * scale)), max(1, int(fh * scale))
+            small_rgb = cv2.cvtColor(
+                cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_LINEAR),
+                cv2.COLOR_BGR2RGB,
+            )
+            self._display_frame_preview(small_rgb)
             self._player_slider_busy = True
             self._player_slider.set(frame_num)
             self._player_slider_busy = False
