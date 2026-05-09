@@ -1348,6 +1348,35 @@ class ApraxiaApp(tk.Tk):
         else:
             self._log_write("[波形] frames.csv が見つかりません。波形連動表示は無効です。")
 
+        # ── HEVC 変換済みファイルへの自動切替 ──
+        # 解析中に HEVC→H.264 変換が行われた場合、変換後ファイルにプレイヤーを切替える
+        if self._video_path:
+            src = Path(self._video_path)
+            h264_name = src.stem + "_h264.mp4"
+            # 変換先候補: 元ファイルと同じディレクトリ、または非ASCII時は APP_DIR
+            candidates = [src.with_name(h264_name), APP_DIR / h264_name]
+            converted_path: "str | None" = None
+            for c in candidates:
+                if c.exists() and str(c) != self._video_path:
+                    converted_path = str(c)
+                    break
+            if converted_path:
+                self._log_write(f"[プレイヤー] H.264変換済みファイルに切替: {Path(converted_path).name}")
+                self._player_reset()
+                self._video_path = converted_path
+                self._video_label.config(
+                    text=f"選択済: {Path(converted_path).name}（H.264 変換済）",
+                    fg="#1a1612",
+                )
+                self._preview_label.config(image="", text="動画情報を読み込み中...", fg="#9e9088")
+                self._preview_label.image = None
+                self._video_info_label.config(text="", fg="#555555")
+                threading.Thread(
+                    target=self._load_video_preview,
+                    args=(converted_path,),
+                    daemon=True,
+                ).start()
+
         self._reset_btn()
 
     def _reset_btn(self):
