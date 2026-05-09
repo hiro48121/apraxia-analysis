@@ -46,6 +46,13 @@ CONFIG_PATH = Path.home() / ".apraxia_app_config.json"
 TASKS = ["hammer", "byebye", "comehere"]
 SIDES = ["Left", "Right"]
 
+# 波形連動表示で使用する列（タスクごとに既存 waveform PNG と同じ列を使用）
+WAVEFORM_COL = {
+    "hammer":   "wrist_y_px_sm",
+    "comehere": "wrist_y_px_sm",
+    "byebye":   "wrist_x_px_sm",
+}
+
 # フォント（OS別：Windows は日本語対応フォントを明示指定）
 if sys.platform == "win32":
     FONT_UI   = "Yu Gothic UI"   # Windows 8.1+
@@ -138,6 +145,15 @@ class ApraxiaApp(tk.Tk):
         self._player_playing: bool = False
         self._player_after_id = None
         self._player_slider_busy: bool = False
+
+        # ── 波形連動表示状態 ──
+        self._waveform_fig = None          # matplotlib Figure
+        self._waveform_ax = None           # matplotlib Axes
+        self._waveform_canvas = None       # FigureCanvasTkAgg
+        self._waveform_cursor_line = None  # 縦線カーソル（Line2D）
+        self._waveform_time_arr: list = [] # time_s の値リスト
+        self._waveform_loaded: bool = False
+        self._waveform_col: str = ""       # 使用中の列名
 
         self._build_ui()
         self._restore_values()
@@ -268,9 +284,12 @@ class ApraxiaApp(tk.Tk):
         # プレーヤーコントロール
         self._build_player_controls(parent, surface, surface2)
 
+        # 波形連動表示エリア
+        self._build_waveform_area(parent, surface, surface2)
+
         # ログ
         log_lf = ttk.LabelFrame(parent, text="ログ", padding=4)
-        log_lf.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+        log_lf.grid(row=4, column=0, sticky="ew", pady=(8, 0))
 
         self._log = scrolledtext.ScrolledText(
             log_lf, height=8,
@@ -779,6 +798,135 @@ class ApraxiaApp(tk.Tk):
         # 初期状態：コントロール無効
         self._player_set_controls_state("disabled")
 
+    # ──────────────────────────────────────────────────────────
+    #  波形連動表示
+    # ──────────────────────────────────────────────────────────
+
+    def _build_waveform_area(self, parent, surface, surface2):
+        """波形連動表示エリアを row=3 に構築する。"""
+        wf_lf = ttk.LabelFrame(parent, text="波形連動表示", padding=4)
+        wf_lf.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+
+        try:
+            from matplotlib.figure import Figure
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        except ImportError:
+            tk.Label(
+                wf_lf,
+                text="波形表示には matplotlib が必要です (pip install matplotlib)",
+                bg=surface2, fg="#9e9088", font=(FONT_UI, 10),
+            ).pack(pady=6)
+            return
+
+        fig = Figure(figsize=(5, 1.5), dpi=80)
+        fig.patch.set_facecolor(surface)
+        ax = fig.add_subplot(111)
+        ax.set_facecolor(surface)
+        ax.tick_params(labelsize=7)
+        ax.set_xlabel("time (s)", fontsize=7)
+        ax.text(
+            0.5, 0.5, "Run analysis to show waveform",
+            transform=ax.transAxes,
+            ha="center", va="center", fontsize=9, color="#9e9088",
+        )
+        fig.tight_layout(pad=0.6)
+
+        canvas = FigureCanvasTkAgg(fig, master=wf_lf)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+
+        self._waveform_fig = fig
+        self._waveform_ax = ax
+        self._waveform_canvas = canvas
+
+    def _load_waveform_from_csv(self, frames_csv_path: str, task: str):
+        """frames.csv を読み取り専用で参照し、波形グラフを描画する。"""
+        if self._waveform_canvas is None:
+            return
+
+        col = WAVEFORM_COL.get(task, "wrist_y_px_sm")
+        self._waveform_col = col
+
+        time_arr: list = []
+        val_arr: list = []
+        outlier_idx_set: set = set()
+        try:
+            with open(frames_csv_path, newline="", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                headers = reader.fieldnames or []
+                missing = [c for c in ("time_s", col) if c not in headers]
+                if missing:
+                    self._log_write(f"[波形] 必要な列が見つかりません: {missing}")
+                    self._waveform_loaded = False
+                    return
+                has_outlier_flag = "outlier_flag" in headers
+                for row in reader:
+                    try:
+                        t = float(row["time_s"])
+                        is_outlier = (
+                            has_outlier_flag
+                            and int(float(row.get("outlier_flag", 0))) == 1
+                        )
+                        if is_outlier:
+                            outlier_idx_set.add(len(time_arr))
+                            v = float("nan")
+                        else:
+                            v = float(row[col])
+                        time_arr.append(t)
+                        val_arr.append(v)
+                    except (ValueError, TypeError):
+                        continue
+        except Exception as e:
+            self._log_write(f"[波形] frames.csv 読み込みエラー: {e}")
+            self._waveform_loaded = False
+            return
+
+        # 境界効果対策：外れ値フレームの前後 ±5 フレームも NaN に拡張（表示専用）
+        BOUNDARY_EXPAND = 1
+        n_total = len(val_arr)
+        for idx in outlier_idx_set:
+            for offset in range(-BOUNDARY_EXPAND, BOUNDARY_EXPAND + 1):
+                neighbor = idx + offset
+                if 0 <= neighbor < n_total:
+                    val_arr[neighbor] = float("nan")
+        n_masked = sum(1 for v in val_arr if v != v)
+
+        if not time_arr:
+            self._log_write("[波形] 有効なデータがありませんでした。")
+            self._waveform_loaded = False
+            return
+
+        self._waveform_time_arr = time_arr
+
+        ax = self._waveform_ax
+        ax.clear()
+        ax.plot(time_arr, val_arr, color="#2d5a8e", linewidth=0.8, alpha=0.9)
+        ax.set_xlabel("time (s)", fontsize=7)
+        ax.set_ylabel(col, fontsize=6)
+        ax.tick_params(labelsize=7)
+        ax.set_title(f"Waveform: {col}", fontsize=8, pad=2)
+        ax.set_xlim(time_arr[0], time_arr[-1])
+
+        self._waveform_cursor_line = ax.axvline(
+            x=time_arr[0], color="#e03030", linewidth=1.2, alpha=0.85,
+        )
+
+        self._waveform_fig.tight_layout(pad=0.6)
+        self._waveform_canvas.draw()
+        self._waveform_loaded = True
+        mask_note = f"  外れ値マスク: {n_masked}フレーム（境界拡張±{BOUNDARY_EXPAND}含む）" if n_masked > 0 else ""
+        self._log_write(
+            f"[波形] 表示完了 — 列: {col}  フレーム数: {len(time_arr)}{mask_note}"
+        )
+
+    def _update_waveform_cursor(self, frame_num: int):
+        """現在フレームに対応する時刻へ縦線カーソルを更新する（波形全体は再描画しない）。"""
+        if not self._waveform_loaded or self._waveform_cursor_line is None:
+            return
+        current_time = frame_num / self._player_fps if self._player_fps > 0 else 0.0
+        self._waveform_cursor_line.set_xdata([current_time, current_time])
+        self._waveform_canvas.draw_idle()
+
     def _player_reset(self):
         """再生を停止し VideoCapture を解放する。動画変更・終了時に呼ぶ。"""
         self._player_stop()
@@ -872,6 +1020,7 @@ class ApraxiaApp(tk.Tk):
         self._player_slider.set(self._player_current_frame)
         self._player_slider_busy = False
         self._player_update_info()
+        self._update_waveform_cursor(self._player_current_frame)
         delay = max(1, int(1000 / self._player_fps))
         self._player_after_id = self.after(delay, self._player_loop)
 
@@ -900,6 +1049,7 @@ class ApraxiaApp(tk.Tk):
             self._player_slider.set(frame_num)
             self._player_slider_busy = False
             self._player_update_info()
+            self._update_waveform_cursor(frame_num)
 
     def _player_on_slider_moved(self, val):
         """ユーザーがスライダーを操作したときのコールバック。"""
@@ -1167,6 +1317,13 @@ class ApraxiaApp(tk.Tk):
         pngs = sorted(out_dir.glob("waveform_*.png"))
         if pngs:
             self._show_waveform(str(pngs[0]))
+
+        # ── 波形連動表示ロード（frames.csv 読み取り専用） ──
+        frames_csv = out_dir / "frames.csv"
+        if frames_csv.exists():
+            self._load_waveform_from_csv(str(frames_csv), task)
+        else:
+            self._log_write("[波形] frames.csv が見つかりません。波形連動表示は無効です。")
 
         self._reset_btn()
 
