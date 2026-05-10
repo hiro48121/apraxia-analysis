@@ -27,6 +27,7 @@ import argparse
 from dataclasses import dataclass
 import math
 from pathlib import Path
+import threading
 from typing import Dict, List, Tuple
 
 import numpy as np
@@ -1045,10 +1046,11 @@ def extract_pose_px_from_video(
         frame_idx += 1
 
     cap.release()
-    try:
-        landmarker.close()
-    except Exception:
-        pass
+    # macOS の MediaPipe VIDEO モードでは close() がハングすることがあるため
+    # タイムアウト付きのデーモンスレッドで呼び出し、詰まっても先に進む。
+    _close_thread = threading.Thread(target=landmarker.close, daemon=True)
+    _close_thread.start()
+    _close_thread.join(timeout=10.0)
 
     raw_df = pd.DataFrame(rows)
     return raw_df, fps, str(video_path)

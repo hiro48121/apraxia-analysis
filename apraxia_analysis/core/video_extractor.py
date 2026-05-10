@@ -12,6 +12,7 @@ import os
 os.environ.setdefault("OPENCV_FFMPEG_LOGLEVEL", "16")
 
 from pathlib import Path
+import threading
 from typing import Any
 
 import cv2
@@ -88,91 +89,96 @@ def extract_pose_hand_px_from_video(
     rows: list[dict[str, Any]] = []
     frame = 0
 
+    pose_lm = vision.PoseLandmarker.create_from_options(pose_opt)
+    hand_lm = vision.HandLandmarker.create_from_options(hand_opt)
     try:
-        with vision.PoseLandmarker.create_from_options(pose_opt) as pose_lm, \
-             vision.HandLandmarker.create_from_options(hand_opt) as hand_lm:
+        while True:
+            ok, bgr = cap.read()
+            if not ok:
+                break
 
-            while True:
-                ok, bgr = cap.read()
-                if not ok:
-                    break
+            if frame % 50 == 0:
+                print(f"  extracting frame {frame}...", flush=True)
+            rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            mp_img = mp.Image(image_format=mp_image_format, data=rgb)
 
-                if frame % 50 == 0:
-                    print(f"  extracting frame {frame}...", flush=True)
-                rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-                mp_img = mp.Image(image_format=mp_image_format, data=rgb)
+            ts_ms = int(frame * 1000.0 / fps)
+            pose_res = pose_lm.detect_for_video(mp_img, ts_ms)
+            hand_res = hand_lm.detect_for_video(mp_img, ts_ms)
 
-                ts_ms = int(frame * 1000.0 / fps)
-                pose_res = pose_lm.detect_for_video(mp_img, ts_ms)
-                hand_res = hand_lm.detect_for_video(mp_img, ts_ms)
+            # Pose 側の主要上肢点を取得する。
+            hip_x = hip_y = sh_x = sh_y = el_x = el_y = wr_x = wr_y = pose_ix_x = pose_ix_y = np.nan
+            if pose_res.pose_landmarks:
+                lms = pose_res.pose_landmarks[0]
+                hip_x, hip_y, _ = _pick_pose_px(lms, pose_idx["HIP"], width, height)
+                sh_x, sh_y, _ = _pick_pose_px(lms, pose_idx["SHOULDER"], width, height)
+                el_x, el_y, _ = _pick_pose_px(lms, pose_idx["ELBOW"], width, height)
+                wr_x, wr_y, _ = _pick_pose_px(lms, pose_idx["WRIST"], width, height)
+                pose_ix_x, pose_ix_y, _ = _pick_pose_px(lms, pose_idx["INDEX"], width, height)
 
-                # Pose 側の主要上肢点を取得する。
-                hip_x = hip_y = sh_x = sh_y = el_x = el_y = wr_x = wr_y = pose_ix_x = pose_ix_y = np.nan
-                if pose_res.pose_landmarks:
-                    lms = pose_res.pose_landmarks[0]
-                    hip_x, hip_y, _ = _pick_pose_px(lms, pose_idx["HIP"], width, height)
-                    sh_x, sh_y, _ = _pick_pose_px(lms, pose_idx["SHOULDER"], width, height)
-                    el_x, el_y, _ = _pick_pose_px(lms, pose_idx["ELBOW"], width, height)
-                    wr_x, wr_y, _ = _pick_pose_px(lms, pose_idx["WRIST"], width, height)
-                    pose_ix_x, pose_ix_y, _ = _pick_pose_px(lms, pose_idx["INDEX"], width, height)
+            hand_wrist_x = hand_wrist_y = np.nan
+            idx_mcp_x = idx_mcp_y = np.nan
+            idx_pip_x = idx_pip_y = np.nan
+            hand_ix_x = hand_ix_y = np.nan
 
-                hand_wrist_x = hand_wrist_y = np.nan
-                idx_mcp_x = idx_mcp_y = np.nan
-                idx_pip_x = idx_pip_y = np.nan
-                hand_ix_x = hand_ix_y = np.nan
-
-                # 複数 hand 候補がある場合は Pose wrist に最も近い手を採用する。
-                chosen = None
-                if hand_res.hand_landmarks:
-                    if np.isfinite(wr_x) and np.isfinite(wr_y):
-                        best_d = 1e18
-                        for hl in hand_res.hand_landmarks:
-                            hwx, hwy = _pick_hand_px(hl, 0, width, height)
-                            d = (hwx - wr_x) ** 2 + (hwy - wr_y) ** 2
-                            if d < best_d:
-                                best_d = d
-                                chosen = hl
-                    else:
-                        chosen = hand_res.hand_landmarks[0]
-
-                if chosen is not None:
-                    hand_wrist_x, hand_wrist_y = _pick_hand_px(chosen, 0, width, height)
-                    idx_mcp_x, idx_mcp_y = _pick_hand_px(chosen, 5, width, height)
-                    idx_pip_x, idx_pip_y = _pick_hand_px(chosen, 6, width, height)
-                    hand_ix_x, hand_ix_y = _pick_hand_px(chosen, 8, width, height)  # INDEX_TIP
-
-                # 代表 index は hand INDEX_TIP を優先し、欠損時は Pose INDEX にフォールバック。
-                if np.isfinite(hand_ix_x) and np.isfinite(hand_ix_y):
-                    index_x = hand_ix_x
-                    index_y = hand_ix_y
-                    index_source = "hand"
-                elif np.isfinite(pose_ix_x) and np.isfinite(pose_ix_y):
-                    index_x = pose_ix_x
-                    index_y = pose_ix_y
-                    index_source = "pose"
+            # 複数 hand 候補がある場合は Pose wrist に最も近い手を採用する。
+            chosen = None
+            if hand_res.hand_landmarks:
+                if np.isfinite(wr_x) and np.isfinite(wr_y):
+                    best_d = 1e18
+                    for hl in hand_res.hand_landmarks:
+                        hwx, hwy = _pick_hand_px(hl, 0, width, height)
+                        d = (hwx - wr_x) ** 2 + (hwy - wr_y) ** 2
+                        if d < best_d:
+                            best_d = d
+                            chosen = hl
                 else:
-                    index_x = np.nan
-                    index_y = np.nan
-                    index_source = "none"
+                    chosen = hand_res.hand_landmarks[0]
 
-                rows.append({
-                    "frame": frame,
-                    "hip_x_px": hip_x, "hip_y_px": hip_y,
-                    "shoulder_x_px": sh_x, "shoulder_y_px": sh_y,
-                    "elbow_x_px": el_x, "elbow_y_px": el_y,
-                    "wrist_x_px": wr_x, "wrist_y_px": wr_y,
-                    "pose_index_x_px": pose_ix_x, "pose_index_y_px": pose_ix_y,
-                    "hand_index_tip_x_px": hand_ix_x, "hand_index_tip_y_px": hand_ix_y,
-                    "index_x_px": index_x, "index_y_px": index_y,
-                    "index_source": index_source,
-                    "hand_wrist_x_px": hand_wrist_x, "hand_wrist_y_px": hand_wrist_y,
-                    "index_mcp_x_px": idx_mcp_x, "index_mcp_y_px": idx_mcp_y,
-                    "index_pip_x_px": idx_pip_x, "index_pip_y_px": idx_pip_y,
-                })
+            if chosen is not None:
+                hand_wrist_x, hand_wrist_y = _pick_hand_px(chosen, 0, width, height)
+                idx_mcp_x, idx_mcp_y = _pick_hand_px(chosen, 5, width, height)
+                idx_pip_x, idx_pip_y = _pick_hand_px(chosen, 6, width, height)
+                hand_ix_x, hand_ix_y = _pick_hand_px(chosen, 8, width, height)  # INDEX_TIP
 
-                frame += 1
+            # 代表 index は hand INDEX_TIP を優先し、欠損時は Pose INDEX にフォールバック。
+            if np.isfinite(hand_ix_x) and np.isfinite(hand_ix_y):
+                index_x = hand_ix_x
+                index_y = hand_ix_y
+                index_source = "hand"
+            elif np.isfinite(pose_ix_x) and np.isfinite(pose_ix_y):
+                index_x = pose_ix_x
+                index_y = pose_ix_y
+                index_source = "pose"
+            else:
+                index_x = np.nan
+                index_y = np.nan
+                index_source = "none"
+
+            rows.append({
+                "frame": frame,
+                "hip_x_px": hip_x, "hip_y_px": hip_y,
+                "shoulder_x_px": sh_x, "shoulder_y_px": sh_y,
+                "elbow_x_px": el_x, "elbow_y_px": el_y,
+                "wrist_x_px": wr_x, "wrist_y_px": wr_y,
+                "pose_index_x_px": pose_ix_x, "pose_index_y_px": pose_ix_y,
+                "hand_index_tip_x_px": hand_ix_x, "hand_index_tip_y_px": hand_ix_y,
+                "index_x_px": index_x, "index_y_px": index_y,
+                "index_source": index_source,
+                "hand_wrist_x_px": hand_wrist_x, "hand_wrist_y_px": hand_wrist_y,
+                "index_mcp_x_px": idx_mcp_x, "index_mcp_y_px": idx_mcp_y,
+                "index_pip_x_px": idx_pip_x, "index_pip_y_px": idx_pip_y,
+            })
+
+            frame += 1
     finally:
         cap.release()
+        # macOS の MediaPipe VIDEO モードでは close() がハングすることがあるため
+        # タイムアウト付きのデーモンスレッドで呼び出す。
+        for _lm in (pose_lm, hand_lm):
+            _t = threading.Thread(target=_lm.close, daemon=True)
+            _t.start()
+            _t.join(timeout=10.0)
 
     raw_df = pd.DataFrame(rows)
     return raw_df, width, height, src_fps, fps
