@@ -49,8 +49,8 @@ SIDES = ["Left", "Right"]
 # 波形連動表示で使用する列（タスクごとに既存 waveform PNG と同じ列を使用）
 WAVEFORM_COL = {
     "hammer":   "wrist_y_px_sm",
-    "comehere": "wrist_y_px_sm",
-    "byebye":   "wrist_x_px_sm",
+    "comehere": "index_y_px_clean",
+    "byebye":   "index_x_px_sm",
 }
 
 # フォント（OS別：Windows は日本語対応フォントを明示指定）
