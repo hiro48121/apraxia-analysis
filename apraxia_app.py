@@ -843,6 +843,14 @@ class ApraxiaApp(tk.Tk):
         self._waveform_ax = ax
         self._waveform_canvas = canvas
 
+        canvas.mpl_connect("button_press_event", self._on_waveform_click)
+
+        tk.Label(
+            wf_lf,
+            text="波形グラフをクリックすると、その時刻へ動画を移動します。",
+            bg=surface, fg="#6b5f52", font=(FONT_UI, 10),
+        ).pack(anchor="w", padx=4, pady=(0, 2))
+
     def _load_waveform_from_csv(self, frames_csv_path: str, task: str):
         """frames.csv を読み取り専用で参照し、波形グラフを描画する。"""
         if self._waveform_canvas is None:
@@ -930,6 +938,24 @@ class ApraxiaApp(tk.Tk):
         current_time = frame_num / self._player_fps if self._player_fps > 0 else 0.0
         self._waveform_cursor_line.set_xdata([current_time, current_time])
         self._waveform_canvas.draw_idle()
+
+    def _on_waveform_click(self, event):
+        """波形グラフクリック時に動画をその時刻へシークする。"""
+        if not self._waveform_loaded:
+            return
+        if self._player_cap is None:
+            return
+        if event.inaxes is not self._waveform_ax:
+            return
+        if event.xdata is None:
+            return
+        if self._player_fps <= 0:
+            self._log_write("[波形クリック] FPS が不正のためシークできません。")
+            return
+        self._player_stop()
+        frame_num = int(round(float(event.xdata) * self._player_fps))
+        frame_num = max(0, min(self._player_total_frames - 1, frame_num))
+        self._player_seek_to(frame_num)
 
     def _player_reset(self):
         """再生を停止し VideoCapture を解放する。動画変更・終了時に呼ぶ。"""
