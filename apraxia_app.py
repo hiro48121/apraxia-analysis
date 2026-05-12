@@ -137,6 +137,9 @@ class ApraxiaApp(tk.Tk):
         self._last_task: str = ""
         self._overlay_running: bool = False
 
+        # ── スクリーンショット保存 ──
+        self._screenshot_btn = None
+
         # ── 動画プレーヤー状態 ──
         self._player_cap = None          # cv2.VideoCapture（再生中は開いたまま）
         self._player_total_frames: int = 0
@@ -396,6 +399,14 @@ class ApraxiaApp(tk.Tk):
             command=self._start_overlay,
         )
         self._overlay_btn.pack(fill="x", pady=(0, 8))
+
+        # ── スクリーンショット保存ボタン ──
+        self._screenshot_btn = ttk.Button(
+            parent, text="スクリーンショット保存",
+            command=self._save_screenshot,
+            state="disabled",
+        )
+        self._screenshot_btn.pack(fill="x", pady=(0, 8))
 
         # ── 解析結果 ──
         res_lf = ttk.LabelFrame(parent, text="解析結果サマリ", padding=8)
@@ -975,6 +986,7 @@ class ApraxiaApp(tk.Tk):
         self._player_slider.config(to=100)
         self._player_slider.set(0)
         self._player_slider_busy = False
+        self._update_screenshot_btn_state()
 
     def _player_init(self, video_path: str, total_frames: int, fps: float):
         """動画が読み込み可能と確認された後、メインスレッドから呼んでプレーヤーを初期化する。"""
@@ -993,6 +1005,7 @@ class ApraxiaApp(tk.Tk):
         self._player_slider_busy = False
         self._player_update_info()
         self._player_set_controls_state("normal")
+        self._update_screenshot_btn_state()
 
     def _player_set_controls_state(self, state: str):
         for w in (self._player_play_btn, self._player_stop_btn,
@@ -1404,6 +1417,7 @@ class ApraxiaApp(tk.Tk):
                 ).start()
 
         self._reset_btn()
+        self._update_screenshot_btn_state()
 
     def _reset_btn(self):
         self._running = False
@@ -1623,6 +1637,104 @@ class ApraxiaApp(tk.Tk):
     def _reset_overlay_btn(self):
         self._overlay_running = False
         self._overlay_btn.configure(state="normal", text="オーバーレイ動画を作成")
+
+    # ──────────────────────────────────────────────────────────
+    #  スクリーンショット保存
+    # ──────────────────────────────────────────────────────────
+
+    def _update_screenshot_btn_state(self):
+        if self._screenshot_btn is None:
+            return
+        ok = (
+            self._player_cap is not None
+            and self._waveform_loaded
+            and bool(self._last_trial_out)
+        )
+        self._screenshot_btn.config(state="normal" if ok else "disabled")
+
+    def _save_screenshot(self):
+        if self._player_cap is None or not self._waveform_loaded or not self._last_trial_out:
+            messagebox.showerror("エラー", "動画と波形データが必要です。")
+            return
+
+        try:
+            import cv2
+        except ImportError:
+            messagebox.showerror("エラー", "opencv-python がインストールされていません。")
+            return
+        try:
+            import io
+            from PIL import Image, ImageDraw
+        except ImportError:
+            messagebox.showerror("エラー", "Pillow がインストールされていません。")
+            return
+
+        frame_num = self._player_current_frame
+
+        # 現在フレームを取得し、cap 位置を元に戻す
+        self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        ret, bgr = self._player_cap.read()
+        self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
+        if not ret:
+            messagebox.showerror("エラー", "フレームを取得できませんでした。")
+            return
+
+        video_img = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
+
+        # 波形図をメモリに描画
+        buf = io.BytesIO()
+        self._waveform_fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+        buf.seek(0)
+        waveform_img = Image.open(buf).copy()
+        buf.close()
+
+        # 両画像を同じ高さに揃えて横並びに合成
+        TARGET_H = 400
+        vw, vh = video_img.size
+        ww, wh = waveform_img.size
+        video_img    = video_img.resize(
+            (max(1, int(vw * TARGET_H / vh)), TARGET_H), Image.LANCZOS)
+        waveform_img = waveform_img.resize(
+            (max(1, int(ww * TARGET_H / wh)), TARGET_H), Image.LANCZOS)
+
+        vw2 = video_img.size[0]
+        ww2 = waveform_img.size[0]
+
+        # 上部情報バー
+        INFO_H  = 28
+        total_w = vw2 + ww2
+        total_h = INFO_H + TARGET_H
+        canvas  = Image.new("RGB", (total_w, total_h), (40, 40, 40))
+        draw    = ImageDraw.Draw(canvas)
+
+        fps    = self._player_fps
+        time_s = frame_num / fps if fps > 0 else 0.0
+        col    = WAVEFORM_COL.get(self._last_task, "")
+        info   = (
+            f"Task: {self._last_task}  |  "
+            f"Frame: {frame_num}  |  "
+            f"Time: {time_s:.2f} s  |  col: {col}"
+        )
+        draw.text((8, 7), info, fill=(220, 220, 200))
+
+        canvas.paste(video_img,    (0,   INFO_H))
+        canvas.paste(waveform_img, (vw2, INFO_H))
+
+        # 保存先（重複時はカウンタを付加）
+        stem      = Path(self._video_path).stem if self._video_path else "video"
+        base_name = f"screenshot_{stem}_frame{frame_num:04d}"
+        out_dir   = Path(self._last_trial_out)
+        out_path  = out_dir / f"{base_name}.png"
+        counter   = 1
+        while out_path.exists():
+            out_path = out_dir / f"{base_name}_{counter}.png"
+            counter += 1
+
+        try:
+            canvas.save(str(out_path), format="PNG")
+            self._log_write(f"[スクリーンショット] 保存: {out_path.name}")
+        except Exception as e:
+            messagebox.showerror("保存エラー", f"スクリーンショットの保存に失敗しました:\n{e}")
 
     # ──────────────────────────────────────────────────────────
     #  設定の保存・復元
