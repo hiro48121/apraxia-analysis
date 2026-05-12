@@ -71,7 +71,7 @@ SUMMARY_KEYS_COMMON = [
 SUMMARY_KEYS_HAMMER = [
     "start_to_onset_s",
     "cycle_time_mean_s_selected10", "cycle_time_sd_s_selected10",
-    "rhythm_cv_selected10",
+    # rhythm_cv_selected10 は hammer では使用しないため表示対象外
     "hit_time_mean_s", "lift_time_mean_s",
     "direction_deg_abs_mean",
     "traj_len_px_mean",
@@ -93,6 +93,62 @@ SUMMARY_KEYS_BYEBYE_COMEHERE = [
     "index_mcp_deg_mean_mean",
     "waveform_mean_corr_10", "waveform_min_corr_10",
 ]
+
+# ─────────────────────────────────────────────────────────────
+#  解析結果サマリ 日本語ラベル辞書
+# ─────────────────────────────────────────────────────────────
+
+LABEL_COMMON = {
+    "participant_id":      "参加者ID",
+    "task":                "タスク",
+    "set_id":              "セットID",
+    "trial_id":            "試行ID",
+    "side":                "側",
+    "n_frames":            "フレーム数",
+    "src_fps":             "フレームレート",
+    "n_cycles_detected":   "検出サイクル数",
+    "n_cycles_selected10": "選択サイクル数",
+    "waveform_pass_10":    "波形一致判定",
+}
+
+LABEL_HAMMER = {
+    "start_to_onset_s":             "開始までの時間",
+    "cycle_time_mean_s_selected10": "サイクル時間平均",
+    "cycle_time_sd_s_selected10":   "サイクル時間標準偏差",
+    "hit_time_mean_s":              "打撃時間平均",
+    "lift_time_mean_s":             "振り上げ時間平均",
+    "direction_deg_abs_mean":       "方向角平均",
+    "traj_len_px_mean":             "軌道長平均",
+    "vmax_px_s_mean":               "最大速度平均",
+    "shoulder_deg_range_mean":      "肩関節可動域平均",
+    "elbow_deg_range_mean":         "肘関節可動域平均",
+    "wrist_deg_range_mean":         "手関節可動域平均",
+    "shoulder_deg_mean_mean":       "肩関節平均角",
+    "elbow_deg_mean_mean":          "肘関節平均角",
+    "wrist_deg_mean_mean":          "手関節平均角",
+    "waveform_mean_corr_10":        "波形相関平均",
+    "waveform_min_corr_10":         "波形相関最小値",
+}
+
+LABEL_BYEBYE_COMEHERE = {
+    "start_to_onset_s":                          "開始までの時間",
+    "cycle_time_mean_s_selected10":              "サイクル時間平均",
+    "cycle_time_sd_s_selected10":                "サイクル時間標準偏差",
+    "rhythm_cv_selected10":                      "サイクル時間変動係数",
+    "selected10_area_px2_mean_over_cycles":      "運動面積平均",
+    "selected10_traj_len_px_mean_over_cycles":   "軌道長平均",
+    "selected10_max_speed_px_s_mean_over_cycles":"最大速度平均",
+    "shoulder_deg_range_mean":                   "肩関節可動域平均",
+    "elbow_deg_range_mean":                      "肘関節可動域平均",
+    "wrist_deg_range_mean":                      "手関節可動域平均",
+    "index_mcp_deg_range_mean":                  "手指MP関節可動域平均",
+    "shoulder_deg_mean_mean":                    "肩関節平均角",
+    "elbow_deg_mean_mean":                       "肘関節平均角",
+    "wrist_deg_mean_mean":                       "手関節平均角",
+    "index_mcp_deg_mean_mean":                   "手指MP関節平均角",
+    "waveform_mean_corr_10":                     "波形相関平均",
+    "waveform_min_corr_10":                      "波形相関最小値",
+}
 
 # ─────────────────────────────────────────────────────────────
 #  設定の保存・読み込み
@@ -1356,6 +1412,11 @@ class ApraxiaApp(tk.Tk):
                     else SUMMARY_KEYS_BYEBYE_COMEHERE
                 )
 
+                label_dict = {
+                    **LABEL_COMMON,
+                    **(LABEL_HAMMER if task == "hammer" else LABEL_BYEBYE_COMEHERE),
+                }
+
                 lines = ["─" * 40]
                 for k in keys:
                     v = row.get(k, "")
@@ -1366,7 +1427,11 @@ class ApraxiaApp(tk.Tk):
                             v = f"{fv:.4f}" if "." in v else v
                         except ValueError:
                             pass
-                        lines.append(f"{k:<38}: {v}")
+                        label = label_dict.get(k)
+                        if label:
+                            lines.append(f"{label}（{k}）：{v}")
+                        else:
+                            lines.append(f"{k}：{v}")
 
                 lines.append("─" * 40)
                 lines.append(f"CSV保存先: {out_dir_str}/")
