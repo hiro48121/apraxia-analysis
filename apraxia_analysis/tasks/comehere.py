@@ -283,8 +283,7 @@ def _build_argparser_comehere() -> argparse.ArgumentParser:
 
 def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     """comehere タスクの波形 PNG を保存する。
-    おいでおいで動作の主運動方向（縦方向 Y 軸）の index_y_px を優先し、
-    外れ値処理後のクリーン系列が波形に反映されるようにする。
+    おいでおいで動作の主運動方向（縦方向 Y 軸）の index_y_px_sm（平滑化済み）を優先する。
     Save representative index y waveform png (y axis in px)."""
     import matplotlib
     matplotlib.use("Agg")
@@ -297,14 +296,13 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
         frames_df["t_s"] if "t_s" in frames_df.columns else frames_df.get("frame_idx", frames_df.index)
     )
 
-    # Prefer representative index Y in px for comehere waveform.
-    # With outlier handling (方式A), we prioritize the cleaned series so the saved waveform reflects outlier processing.
-    if "index_y_px_clean" in frames_df.columns:
-        y = frames_df["index_y_px_clean"]
-        ylab = "index_y_px_clean"
-    elif "index_y_px_sm" in frames_df.columns:
+    # Prefer smoothed index Y for comehere waveform (consistent with GUI display and cycle detection signal).
+    if "index_y_px_sm" in frames_df.columns:
         y = frames_df["index_y_px_sm"]
         ylab = "index_y_px_sm"
+    elif "index_y_px_clean" in frames_df.columns:
+        y = frames_df["index_y_px_clean"]
+        ylab = "index_y_px_clean"
     elif "index_y_px_raw" in frames_df.columns:
         y = frames_df["index_y_px_raw"]
         ylab = "index_y_px_raw"

@@ -327,8 +327,7 @@ def _build_argparser_byebye() -> argparse.ArgumentParser:
 
 def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     """byebye タスクの波形 PNG を保存する。
-    バイバイ動作の主運動方向（横方向 X 軸）を表す cycle_signal_smooth_px を優先し、
-    外れ値処理後のクリーン系列が波形に反映されるようにする。
+    バイバイ動作の主運動方向（横方向 X 軸）の index_x_px_sm（絶対座標・平滑化済み）を優先する。
     Save waveform png for byebye."""
     import matplotlib
     matplotlib.use("Agg")
@@ -341,17 +340,16 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
         frames_df["t_s"] if "t_s" in frames_df.columns else frames_df.get("frame_idx", frames_df.index)
     )
 
-    # For byebye, the lateral component is the main cycle signal.
-    # Prefer the cleaned/smoothed cycle-signal first, then cleaned index-x, then raw x.
-    if "cycle_signal_smooth_px" in frames_df.columns:
+    # For byebye, use absolute smoothed index-x (consistent with GUI display and other tasks).
+    if "index_x_px_sm" in frames_df.columns:
+        y = frames_df["index_x_px_sm"]
+        ylab = "index_x_px_sm"
+    elif "cycle_signal_smooth_px" in frames_df.columns:
         y = frames_df["cycle_signal_smooth_px"]
         ylab = "cycle_signal_smooth_px"
     elif "cycle_signal_px" in frames_df.columns:
         y = frames_df["cycle_signal_px"]
         ylab = "cycle_signal_px"
-    elif "index_x_px_sm" in frames_df.columns:
-        y = frames_df["index_x_px_sm"]
-        ylab = "index_x_px_sm"
     elif "index_x_px_clean" in frames_df.columns:
         y = frames_df["index_x_px_clean"]
         ylab = "index_x_px_clean"

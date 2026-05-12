@@ -1070,12 +1070,12 @@ def save_waveform_png(frames_df: pd.DataFrame, out_dir: Path) -> Path:
     stem = out_dir.name
 
     x = frames_df["time_s"] if "time_s" in frames_df.columns else frames_df["frame_idx"]
-    if "wrist_y_px_clean" in frames_df.columns:
-        y = frames_df["wrist_y_px_clean"]
-        ylab = "wrist_y_px_clean"
-    elif "wrist_y_px_sm" in frames_df.columns:
+    if "wrist_y_px_sm" in frames_df.columns:
         y = frames_df["wrist_y_px_sm"]
         ylab = "wrist_y_px_sm"
+    elif "wrist_y_px_clean" in frames_df.columns:
+        y = frames_df["wrist_y_px_clean"]
+        ylab = "wrist_y_px_clean"
     else:
         y = frames_df["wrist_y_px_raw"]
         ylab = "wrist_y_px_raw"

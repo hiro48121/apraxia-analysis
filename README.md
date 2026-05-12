@@ -162,7 +162,7 @@ python apraxia_app.py
 - **横軸**：時刻（秒）
 - **縦軸**：タスクに応じた変位
   - hammer：`wrist_y_px_sm`（垂直方向の平滑化手首位置）
-  - comehere：`index_y_px_clean`（垂直方向の外れ値除去済み示指位置）
+  - comehere：`index_y_px_sm`（垂直方向の平滑化示指位置）
   - byebye：`index_x_px_sm`（水平方向の平滑化示指位置）
 - **赤い縦線**：動画の現在再生位置に対応するカーソル
 - 外れ値フレーム（`outlier_flag = 1`）および前後 ±1 フレームはマスクされ、線が途切れて表示されます
