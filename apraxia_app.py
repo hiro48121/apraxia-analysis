@@ -196,6 +196,12 @@ class ApraxiaApp(tk.Tk):
         # ── スクリーンショット保存 ──
         self._screenshot_btn = None
 
+        # ── 解析前チェック ──
+        self._precheck_summary_label = None
+        self._precheck_detail_btn = None
+        self._precheck_results: list = []
+        self._video_is_hevc = None   # True=HEVC確定/疑い, False=非HEVC, None=未判定
+
         # ── 動画プレーヤー状態 ──
         self._player_cap = None          # cv2.VideoCapture（再生中は開いたまま）
         self._player_total_frames: int = 0
@@ -449,6 +455,23 @@ class ApraxiaApp(tk.Tk):
         )
         self._analyze_btn.pack(fill="x", pady=(6, 8))
 
+        # ── 解析前チェック 要約 ──
+        precheck_row = ttk.Frame(parent)
+        precheck_row.pack(fill="x", pady=(0, 4))
+        self._precheck_summary_label = ttk.Label(
+            precheck_row,
+            text="解析前チェック：未実行",
+            font=(FONT_UI, 11),
+            foreground="#888888",
+        )
+        self._precheck_summary_label.pack(side="left", padx=(2, 6))
+        self._precheck_detail_btn = ttk.Button(
+            precheck_row, text="詳細", width=5,
+            command=lambda: self._show_pre_check_detail(self._precheck_results),
+            state="disabled",
+        )
+        self._precheck_detail_btn.pack(side="left")
+
         # ── オーバーレイ動画作成ボタン ──
         self._overlay_btn = ttk.Button(
             parent, text="オーバーレイ動画を作成",
@@ -613,6 +636,14 @@ class ApraxiaApp(tk.Tk):
 
         self._player_stop()
 
+        # ── 解析前チェック ──
+        results = self._run_pre_check()
+        self._precheck_results = results
+        self._update_pre_check_label(results)
+        if any(r["status"] == "stop" for r in results):
+            self._show_pre_check_detail(results)
+            return
+
         # ── バリデーション ──
         if not self._video_path:
             messagebox.showerror("エラー", "動画ファイルを選択してください。")
@@ -735,6 +766,7 @@ class ApraxiaApp(tk.Tk):
 
     def _load_video_preview(self, video_path: str):
         """動画選択直後にプレビューフレームと動画情報を表示する（バックグラウンドスレッド）。"""
+        self._video_is_hevc = None   # 判定開始前にリセット
         # PyAV でコーデックを直接確認（インストール済みの場合）
         is_hevc = False
         try:
@@ -746,6 +778,7 @@ class ApraxiaApp(tk.Tk):
             pass
 
         if is_hevc:
+            self._video_is_hevc = True
             msg = "⚠ HEVC（H.265）形式です\n解析時に自動的にH.264へ変換されます"
             self.after(0, lambda: self._video_info_label.config(text=msg, fg="#b85c00"))
             self.after(0, lambda: self._preview_label.config(
@@ -760,12 +793,14 @@ class ApraxiaApp(tk.Tk):
                     cap.release()
                 except Exception:
                     pass
+            self._video_is_hevc = True
             msg = "⚠ HEVC（H.265）形式の可能性があります\n解析時に自動的にH.264へ変換されます"
             self.after(0, lambda: self._video_info_label.config(text=msg, fg="#b85c00"))
             self.after(0, lambda: self._preview_label.config(
                 text="プレビュー不可（HEVC形式）", fg="#9e9088"))
             return
 
+        self._video_is_hevc = False
         import cv2
         width    = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height   = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -1702,6 +1737,237 @@ class ApraxiaApp(tk.Tk):
     def _reset_overlay_btn(self):
         self._overlay_running = False
         self._overlay_btn.configure(state="normal", text="オーバーレイ動画を作成")
+
+    # ──────────────────────────────────────────────────────────
+    #  解析前チェック
+    # ──────────────────────────────────────────────────────────
+
+    def _run_pre_check(self) -> list:
+        """解析前チェックを実行し結果リストを返す。
+        各要素: {"status": "ok"|"warn"|"stop", "message": str}
+        """
+        results = []
+        task = self._task_var.get()
+
+        # ── 1. 動画ファイル ──
+        video_exists = False
+        if not self._video_path:
+            results.append({"status": "stop",
+                            "message": "❌ 動画ファイル：未選択"})
+        elif not Path(self._video_path).exists():
+            results.append({"status": "stop",
+                            "message": "❌ 動画ファイル：見つかりません"})
+        else:
+            results.append({"status": "ok",
+                            "message": "✅ 動画ファイル：OK"})
+            video_exists = True
+
+        # ── 2. 動画読み込み ──
+        if video_exists:
+            if self._player_cap is not None:
+                results.append({"status": "ok",
+                                "message": "✅ 動画読み込み：OK"})
+            elif self._video_is_hevc is True:
+                results.append({"status": "warn",
+                                "message": "⚠️ 動画読み込み：HEVC形式のためOpenCVでは開けません。H.264変換後に解析されます"})
+            elif self._video_is_hevc is None:
+                results.append({"status": "warn",
+                                "message": "⚠️ 動画読み込み：動画情報を読み込み中です。しばらく待ってから再実行してください"})
+            else:
+                results.append({"status": "stop",
+                                "message": "❌ 動画読み込み：失敗"})
+
+        # ── 3. FPS取得 ──
+        if video_exists:
+            EXPECTED_FPS = 60.0
+            if self._player_cap is not None and self._player_fps > 0:
+                fps = self._player_fps
+                if abs(fps - EXPECTED_FPS) < 0.5:
+                    results.append({"status": "ok",
+                                    "message": f"✅ FPS取得：{fps:.2f} fps"})
+                else:
+                    results.append({"status": "warn",
+                                    "message": f"⚠️ FPS：{fps:.2f} fps（{EXPECTED_FPS:.0f}fps想定と異なりますが、取得FPSに基づいて解析します）"})
+            elif self._video_is_hevc is True:
+                results.append({"status": "warn",
+                                "message": "⚠️ FPS取得：HEVC形式のためFPS未取得。H.264変換後に解析されます"})
+            elif self._video_is_hevc is None:
+                results.append({"status": "warn",
+                                "message": "⚠️ FPS取得：動画情報を読み込み中です"})
+            else:
+                results.append({"status": "stop",
+                                "message": "❌ FPS取得：失敗"})
+
+        # ── 4. フレーム数取得 ──
+        if video_exists:
+            if self._player_cap is not None and self._player_total_frames > 0:
+                results.append({"status": "ok",
+                                "message": f"✅ フレーム数取得：{self._player_total_frames} frames"})
+            elif self._video_is_hevc is True:
+                results.append({"status": "warn",
+                                "message": "⚠️ フレーム数取得：HEVC形式のため未取得。H.264変換後に解析されます"})
+            elif self._video_is_hevc is None:
+                results.append({"status": "warn",
+                                "message": "⚠️ フレーム数取得：動画情報を読み込み中です"})
+            else:
+                results.append({"status": "stop",
+                                "message": "❌ フレーム数取得：失敗"})
+
+        # ── 5. Poseモデル ──
+        pose = self._pose_model_var.get().strip()
+        if not pose:
+            results.append({"status": "stop",
+                            "message": "❌ Poseモデル：未設定"})
+        elif not Path(pose).exists():
+            results.append({"status": "stop",
+                            "message": "❌ Poseモデル：見つかりません"})
+        else:
+            results.append({"status": "ok",
+                            "message": "✅ Poseモデル：OK"})
+
+        # ── 6. Handモデル ──
+        hand = self._hand_model_var.get().strip()
+        if task == "hammer":
+            if hand and Path(hand).exists():
+                results.append({"status": "ok",
+                                "message": "✅ Handモデル：設定あり。ただしhammerでは使用しません"})
+            else:
+                results.append({"status": "ok",
+                                "message": "✅ Handモデル：hammerでは不要"})
+        elif task in ("byebye", "comehere"):
+            if not hand:
+                results.append({"status": "stop",
+                                "message": f"❌ Handモデル：{task} では必要です"})
+            elif not Path(hand).exists():
+                results.append({"status": "stop",
+                                "message": "❌ Handモデル：見つかりません"})
+            else:
+                results.append({"status": "ok",
+                                "message": "✅ Handモデル：OK"})
+        else:
+            results.append({"status": "warn",
+                            "message": "⚠️ Handモデル：タスク未選択のため判定不可"})
+
+        # ── 7. 出力先フォルダ ──
+        out_dir_str = self._out_dir_var.get().strip()
+        if not out_dir_str:
+            results.append({"status": "stop",
+                            "message": "❌ 出力先フォルダ：未設定"})
+        else:
+            try:
+                Path(out_dir_str).mkdir(parents=True, exist_ok=True)
+                results.append({"status": "ok",
+                                "message": "✅ 出力先フォルダ：OK"})
+            except Exception:
+                results.append({"status": "stop",
+                                "message": "❌ 出力先フォルダ：使用できません"})
+
+        # ── 8. 日本語・全角パス ──
+        path_checks = [
+            ("動画ファイル",   self._video_path),
+            ("Poseモデル",     self._pose_model_var.get()),
+            ("出力先フォルダ", self._out_dir_var.get()),
+            ("アプリフォルダ", str(APP_DIR)),
+        ]
+        if task in ("byebye", "comehere") and self._hand_model_var.get():
+            path_checks.append(("Handモデル", self._hand_model_var.get()))
+        problem = [(lbl, p) for lbl, p in path_checks if p and not p.isascii()]
+        if not problem:
+            results.append({"status": "ok",
+                            "message": "✅ 日本語・全角パス：なし"})
+        elif sys.platform == "win32":
+            detail = "、".join(lbl for lbl, _ in problem)
+            results.append({"status": "stop",
+                            "message": f"❌ 日本語・全角パス：WindowsではMediaPipeが読み込めない可能性があります（{detail}）"})
+        else:
+            detail = "、".join(lbl for lbl, _ in problem)
+            results.append({"status": "warn",
+                            "message": f"⚠️ 日本語・全角パス：macOSでは注意扱いです（{detail}）"})
+
+        # ── 9. Cueフレーム ──
+        try:
+            cue_val = int(self._cue_var.get().strip())
+        except ValueError:
+            cue_val = 0
+        if cue_val == 0:
+            results.append({"status": "ok",
+                            "message": "✅ Cueフレーム：0"})
+        else:
+            results.append({"status": "warn",
+                            "message": f"⚠️ Cueフレーム：{cue_val}（通常は0を使用します）"})
+
+        # ── 10. HEVC判定 ──
+        if video_exists:
+            if self._video_is_hevc is True:
+                results.append({"status": "warn",
+                                "message": "⚠️ HEVC判定：HEVC形式です。H.264へ変換される可能性があります"})
+            elif self._video_is_hevc is False:
+                results.append({"status": "ok",
+                                "message": "✅ HEVC判定：通常動画"})
+            else:
+                results.append({"status": "warn",
+                                "message": "⚠️ HEVC判定：判定できませんでした"})
+
+        # ── 11. タスク選択 ──
+        if task in TASKS:
+            results.append({"status": "ok",
+                            "message": f"✅ タスク選択：{task}"})
+        else:
+            results.append({"status": "stop",
+                            "message": "❌ タスク選択：未選択"})
+
+        return results
+
+    def _update_pre_check_label(self, results: list):
+        """チェック結果に基づき要約ラベルと詳細ボタンを更新する。"""
+        if self._precheck_summary_label is None:
+            return
+        statuses = {r["status"] for r in results}
+        if "stop" in statuses:
+            self._precheck_summary_label.config(
+                text="解析前チェック：停止項目あり", foreground="#cc0000")
+        elif "warn" in statuses:
+            self._precheck_summary_label.config(
+                text="解析前チェック：注意あり", foreground="#b85c00")
+        else:
+            self._precheck_summary_label.config(
+                text="解析前チェック：OK", foreground="#2e7d2e")
+        if self._precheck_detail_btn is not None:
+            self._precheck_detail_btn.config(state="normal")
+
+    def _show_pre_check_detail(self, results: list):
+        """解析前チェック詳細を別ウィンドウに表示する。"""
+        if not results:
+            return
+        dlg = tk.Toplevel(self)
+        dlg.title("解析前チェック詳細")
+        dlg.resizable(True, False)
+
+        frame = ttk.Frame(dlg, padding=(12, 8, 12, 4))
+        frame.pack(fill="both", expand=True)
+
+        text = scrolledtext.ScrolledText(
+            frame,
+            width=74, height=min(len(results) + 4, 22),
+            font=(FONT_MONO, 12),
+            bg="#f8f6f2", fg="#1a1612",
+            relief="flat",
+            state="normal",
+            wrap="word",
+        )
+        text.pack(fill="both", expand=True)
+        for r in results:
+            text.insert("end", r["message"] + "\n")
+        text.config(state="disabled")
+
+        ttk.Button(dlg, text="閉じる", command=dlg.destroy).pack(pady=(4, 10))
+
+        dlg.update_idletasks()
+        w = dlg.winfo_reqwidth()
+        h = dlg.winfo_reqheight()
+        x = self.winfo_rootx() + (self.winfo_width() - w) // 2
+        y = self.winfo_rooty() + (self.winfo_height() - h) // 2
+        dlg.geometry(f"+{x}+{y}")
 
     # ──────────────────────────────────────────────────────────
     #  スクリーンショット保存
