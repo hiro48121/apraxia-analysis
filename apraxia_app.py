@@ -134,7 +134,7 @@ LABEL_BYEBYE_COMEHERE = {
     "start_to_onset_s":                          "開始までの時間",
     "cycle_time_mean_s_selected10":              "サイクル時間平均",
     "cycle_time_sd_s_selected10":                "サイクル時間標準偏差",
-    "rhythm_cv_selected10":                      "サイクル時間変動係数",
+    "rhythm_cv_selected10":                      "リズム変動係数",
     "selected10_area_px2_mean_over_cycles":      "運動面積平均",
     "selected10_traj_len_px_mean_over_cycles":   "軌道長平均",
     "selected10_max_speed_px_s_mean_over_cycles":"最大速度平均",
