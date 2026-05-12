@@ -1671,7 +1671,7 @@ class ApraxiaApp(tk.Tk):
 
         frame_num = self._player_current_frame
 
-        # 現在フレームを取得し、cap 位置を元に戻す
+        # 現在フレームを取得し cap 位置を元に戻す
         self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
         ret, bgr = self._player_cap.read()
         self._player_cap.set(cv2.CAP_PROP_POS_FRAMES, frame_num)
@@ -1681,29 +1681,39 @@ class ApraxiaApp(tk.Tk):
 
         video_img = Image.fromarray(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
 
-        # 波形図をメモリに描画
+        # 波形図をメモリに保存
         buf = io.BytesIO()
         self._waveform_fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
         buf.seek(0)
         waveform_img = Image.open(buf).copy()
         buf.close()
 
-        # 両画像を同じ高さに揃えて横並びに合成
-        TARGET_H = 400
+        # 動画を高さ最大 400px に縮小
+        VIDEO_MAX_H  = 400
+        CANVAS_MIN_W = 800
         vw, vh = video_img.size
+        video_img = video_img.resize(
+            (max(1, int(vw * VIDEO_MAX_H / vh)), VIDEO_MAX_H), Image.LANCZOS)
+        video_w = video_img.size[0]
+
+        # キャンバス幅 = max(動画幅, 800px)
+        total_w = max(video_w, CANVAS_MIN_W)
+
+        # 動画がキャンバス幅より狭ければキャンバス幅に合わせて拡大
+        if video_w < total_w:
+            video_img = video_img.resize(
+                (total_w, max(1, int(VIDEO_MAX_H * total_w / video_w))), Image.LANCZOS)
+        video_w, video_h = video_img.size
+
+        # 波形をキャンバス幅に合わせてリサイズ（縦横比を保持）
         ww, wh = waveform_img.size
-        video_img    = video_img.resize(
-            (max(1, int(vw * TARGET_H / vh)), TARGET_H), Image.LANCZOS)
         waveform_img = waveform_img.resize(
-            (max(1, int(ww * TARGET_H / wh)), TARGET_H), Image.LANCZOS)
+            (total_w, max(1, int(wh * total_w / ww))), Image.LANCZOS)
+        waveform_h = waveform_img.size[1]
 
-        vw2 = video_img.size[0]
-        ww2 = waveform_img.size[0]
-
-        # 上部情報バー
+        # 縦積み合成（情報バー → 動画 → 波形）
         INFO_H  = 28
-        total_w = vw2 + ww2
-        total_h = INFO_H + TARGET_H
+        total_h = INFO_H + video_h + waveform_h
         canvas  = Image.new("RGB", (total_w, total_h), (40, 40, 40))
         draw    = ImageDraw.Draw(canvas)
 
@@ -1717,8 +1727,8 @@ class ApraxiaApp(tk.Tk):
         )
         draw.text((8, 7), info, fill=(220, 220, 200))
 
-        canvas.paste(video_img,    (0,   INFO_H))
-        canvas.paste(waveform_img, (vw2, INFO_H))
+        canvas.paste(video_img,    (0, INFO_H))
+        canvas.paste(waveform_img, (0, INFO_H + video_h))
 
         # 保存先（重複時はカウンタを付加）
         stem      = Path(self._video_path).stem if self._video_path else "video"
