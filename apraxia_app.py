@@ -202,7 +202,6 @@ DISPLAY_ITEMS_COMMON_TOP = [
     ("section", "【共通運動学的指標（中央5サイクル）】"),
     ("meansd",  "cycle_time_mean_s_central5",   "cycle_time_sd_s_central5",    "サイクル時間"),
     ("single",  "rhythm_cv_central5",           "リズム変動係数"),
-    ("meansd",  "amp_mean_px_central5",         "amp_sd_px_central5",          "振幅"),
     ("meansd",  "traj_len_mean_px_central5",    "traj_len_sd_px_central5",     "軌道長"),
     ("meansd",  "max_speed_mean_px_s_central5", "max_speed_sd_px_s_central5",  "最大速度"),
 ]
