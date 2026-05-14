@@ -175,6 +175,65 @@ LABEL_CENTRAL5 = {
 }
 
 # ─────────────────────────────────────────────────────────────
+#  解析結果サマリ 表示定義（セクション構造）
+#  各タプル形式:
+#    ("section", ヘッダ文字列)
+#    ("single",  csv_key, ラベル)
+#    ("meansd",  mean_key, sd_key, ラベル)
+# ─────────────────────────────────────────────────────────────
+DISPLAY_ITEMS_COMMON_TOP = [
+    ("section", "【基本情報】"),
+    ("single",  "participant_id",   "参加者ID"),
+    ("single",  "task",             "タスク"),
+    ("single",  "set_id",           "セットID"),
+    ("single",  "trial_id",         "試行ID"),
+    ("single",  "side",             "側"),
+    ("single",  "n_frames",         "フレーム数"),
+    ("single",  "src_fps",          "フレームレート"),
+    ("section", "【検出・確認】"),
+    ("single",  "n_cycles_detected",      "検出サイクル数"),
+    ("single",  "central5_available",     "中央5サイクル利用可"),
+    ("single",  "n_cycles_central5",      "中央5サイクル数"),
+    ("single",  "qc_cycle_count_warning", "サイクル数確認フラグ"),
+    ("single",  "waveform_pass_10",       "波形一致判定"),
+    ("single",  "waveform_mean_corr_10",  "波形相関平均"),
+    ("single",  "waveform_min_corr_10",   "波形相関最小値"),
+    ("single",  "start_to_onset_s",       "開始までの時間"),
+    ("section", "【共通運動学的指標（中央5サイクル）】"),
+    ("meansd",  "cycle_time_mean_s_central5",   "cycle_time_sd_s_central5",    "サイクル時間"),
+    ("single",  "rhythm_cv_central5",           "リズム変動係数"),
+    ("meansd",  "amp_mean_px_central5",         "amp_sd_px_central5",          "振幅"),
+    ("meansd",  "traj_len_mean_px_central5",    "traj_len_sd_px_central5",     "軌道長"),
+    ("meansd",  "max_speed_mean_px_s_central5", "max_speed_sd_px_s_central5",  "最大速度"),
+]
+
+DISPLAY_ITEMS_HAMMER_SPECIFIC = [
+    ("section", "【hammer固有指標（中央5サイクル）】"),
+    ("meansd",  "hit_time_mean_s_central5",        "hit_time_sd_s_central5",        "打撃時間"),
+    ("meansd",  "lift_time_mean_s_central5",       "lift_time_sd_s_central5",       "振り上げ時間"),
+    ("meansd",  "direction_deg_abs_mean_central5", "direction_deg_abs_sd_central5", "方向角"),
+    ("meansd",  "shoulder_deg_range_mean_central5","shoulder_deg_range_sd_central5","肩関節可動域"),
+    ("meansd",  "elbow_deg_range_mean_central5",   "elbow_deg_range_sd_central5",   "肘関節可動域"),
+    ("meansd",  "wrist_deg_range_mean_central5",   "wrist_deg_range_sd_central5",   "手関節可動域"),
+    ("meansd",  "shoulder_deg_mean_mean_central5", "shoulder_deg_mean_sd_central5", "肩関節平均角"),
+    ("meansd",  "elbow_deg_mean_mean_central5",    "elbow_deg_mean_sd_central5",    "肘関節平均角"),
+    ("meansd",  "wrist_deg_mean_mean_central5",    "wrist_deg_mean_sd_central5",    "手関節平均角"),
+]
+
+DISPLAY_ITEMS_BYEBYE_COMEHERE_SPECIFIC = [
+    ("section", "【byebye・comehere固有指標（中央5サイクル）】"),
+    ("meansd",  "area_mean_px2_central5",             "area_sd_px2_central5",             "運動面積"),
+    ("meansd",  "shoulder_deg_range_mean_central5",   "shoulder_deg_range_sd_central5",   "肩関節可動域"),
+    ("meansd",  "elbow_deg_range_mean_central5",      "elbow_deg_range_sd_central5",      "肘関節可動域"),
+    ("meansd",  "wrist_deg_range_mean_central5",      "wrist_deg_range_sd_central5",      "手関節可動域"),
+    ("meansd",  "index_mcp_deg_range_mean_central5",  "index_mcp_deg_range_sd_central5",  "手指MP関節可動域"),
+    ("meansd",  "shoulder_deg_mean_mean_central5",    "shoulder_deg_mean_sd_central5",    "肩関節平均角"),
+    ("meansd",  "elbow_deg_mean_mean_central5",       "elbow_deg_mean_sd_central5",       "肘関節平均角"),
+    ("meansd",  "wrist_deg_mean_mean_central5",       "wrist_deg_mean_sd_central5",       "手関節平均角"),
+    ("meansd",  "index_mcp_deg_mean_mean_central5",   "index_mcp_deg_mean_sd_central5",   "手指MP関節平均角"),
+]
+
+# ─────────────────────────────────────────────────────────────
 #  設定の保存・読み込み
 # ─────────────────────────────────────────────────────────────
 
@@ -1466,33 +1525,41 @@ class ApraxiaApp(tk.Tk):
                 with open(summary_csv, newline="", encoding="utf-8") as f:
                     row = next(csv.DictReader(f), {})
 
-                keys = SUMMARY_KEYS_COMMON + (
-                    SUMMARY_KEYS_HAMMER if task == "hammer"
-                    else SUMMARY_KEYS_BYEBYE_COMEHERE
-                ) + SUMMARY_KEYS_CENTRAL5
-
-                label_dict = {
-                    **LABEL_COMMON,
-                    **(LABEL_HAMMER if task == "hammer" else LABEL_BYEBYE_COMEHERE),
-                    **LABEL_CENTRAL5,
-                }
-
+                _items = DISPLAY_ITEMS_COMMON_TOP + (
+                    DISPLAY_ITEMS_HAMMER_SPECIFIC if task == "hammer"
+                    else DISPLAY_ITEMS_BYEBYE_COMEHERE_SPECIFIC
+                )
                 lines = ["─" * 40]
-                for k in keys:
-                    v = row.get(k, "")
-                    if v not in ("", None, "nan"):
-                        # 数値は小数点4桁に整形
-                        try:
-                            fv = float(v)
-                            v = f"{fv:.4f}" if "." in v else v
-                        except ValueError:
-                            pass
-                        label = label_dict.get(k)
-                        if label:
-                            lines.append(f"{label}（{k}）：{v}")
-                        else:
-                            lines.append(f"{k}：{v}")
-
+                for item in _items:
+                    if item[0] == "section":
+                        lines.append(item[1])
+                    elif item[0] == "single":
+                        _, key, label = item
+                        v = row.get(key, "")
+                        if v not in ("", None, "nan"):
+                            try:
+                                fv = float(v)
+                                v = f"{fv:.4f}" if "." in v else v
+                            except ValueError:
+                                pass
+                            lines.append(f"  {label}（{key}）：{v}")
+                    elif item[0] == "meansd":
+                        _, mean_key, sd_key, label = item
+                        mv = row.get(mean_key, "")
+                        sv = row.get(sd_key, "")
+                        if mv not in ("", None, "nan"):
+                            try:
+                                mv = f"{float(mv):.4f}"
+                            except ValueError:
+                                pass
+                            if sv not in ("", None, "nan"):
+                                try:
+                                    sv = f"{float(sv):.4f}"
+                                except ValueError:
+                                    pass
+                                lines.append(f"  {label}（{mean_key} / {sd_key}）：{mv} ± {sv}")
+                            else:
+                                lines.append(f"  {label}（{mean_key}）：{mv}")
                 lines.append("─" * 40)
                 lines.append(f"CSV保存先: {out_dir_str}/")
                 self._show_result("\n".join(lines))
