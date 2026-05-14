@@ -33,6 +33,7 @@ from ..core.math_utils import (
     _cycle_waveforms_from_y,
     _corr_to_mean_wave,
     select_best_contiguous_cycles_by_cv,
+    compute_central5_stats,
 )
 from ..core.video_extractor import extract_pose_hand_px_from_video
 
@@ -693,6 +694,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
     meta: dict[str, Any] = {
         "participant_id": args.participant_id,
         "condition": args.condition,
+        "task": args.condition,
         "set_id": int(args.set_id),
         "trial_id": int(args.trial_id),
         "side": args.side,
@@ -779,6 +781,14 @@ def run_comehere(argv: list[str] | None = None) -> None:
                 meta.setdefault(_key, np.nan)
     meta["use_cycles_from"] = _use_from
     meta["use_cycles_to"] = _use_to
+
+    # ── central5：全検出サイクルの時間順第4〜第8サイクル ──
+    meta.update(compute_central5_stats(
+        cycles_df,
+        target_cycles=int(args.target_cycles),
+        amp_col="amp_px",
+        speed_col="max_speed_px_s",
+    ))
 
     summary_df = pd.DataFrame([meta])
 

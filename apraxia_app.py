@@ -93,6 +93,16 @@ SUMMARY_KEYS_BYEBYE_COMEHERE = [
     "index_mcp_deg_mean_mean",
     "waveform_mean_corr_10", "waveform_min_corr_10",
 ]
+SUMMARY_KEYS_CENTRAL5 = [
+    "central5_available",
+    "n_cycles_central5",
+    "qc_cycle_count_warning",
+    "cycle_time_mean_s_central5", "cycle_time_sd_s_central5",
+    "rhythm_cv_central5",
+    "amp_mean_px_central5",      "amp_sd_px_central5",
+    "traj_len_mean_px_central5", "traj_len_sd_px_central5",
+    "max_speed_mean_px_s_central5", "max_speed_sd_px_s_central5",
+]
 
 # ─────────────────────────────────────────────────────────────
 #  解析結果サマリ 日本語ラベル辞書
@@ -148,6 +158,20 @@ LABEL_BYEBYE_COMEHERE = {
     "index_mcp_deg_mean_mean":                   "手指MP関節平均角",
     "waveform_mean_corr_10":                     "波形相関平均",
     "waveform_min_corr_10":                      "波形相関最小値",
+}
+LABEL_CENTRAL5 = {
+    "central5_available":          "中央5サイクル利用可",
+    "n_cycles_central5":           "中央5サイクル数",
+    "qc_cycle_count_warning":      "サイクル数確認フラグ",
+    "cycle_time_mean_s_central5":  "中央5サイクル時間平均",
+    "cycle_time_sd_s_central5":    "中央5サイクル時間標準偏差",
+    "rhythm_cv_central5":          "中央5リズム変動係数",
+    "amp_mean_px_central5":        "中央5振幅平均",
+    "amp_sd_px_central5":          "中央5振幅標準偏差",
+    "traj_len_mean_px_central5":   "中央5軌道長平均",
+    "traj_len_sd_px_central5":     "中央5軌道長標準偏差",
+    "max_speed_mean_px_s_central5":"中央5最大速度平均",
+    "max_speed_sd_px_s_central5":  "中央5最大速度標準偏差",
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -1445,11 +1469,12 @@ class ApraxiaApp(tk.Tk):
                 keys = SUMMARY_KEYS_COMMON + (
                     SUMMARY_KEYS_HAMMER if task == "hammer"
                     else SUMMARY_KEYS_BYEBYE_COMEHERE
-                )
+                ) + SUMMARY_KEYS_CENTRAL5
 
                 label_dict = {
                     **LABEL_COMMON,
                     **(LABEL_HAMMER if task == "hammer" else LABEL_BYEBYE_COMEHERE),
+                    **LABEL_CENTRAL5,
                 }
 
                 lines = ["─" * 40]

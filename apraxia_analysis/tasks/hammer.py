@@ -33,6 +33,8 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from ..core.math_utils import compute_central5_stats
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Hammer 固有ユーティリティ
@@ -906,6 +908,14 @@ def process_hammer_trial(
         "wrist_deg_mean_mean": _col_mean("wrist_deg_mean"),
         "selected_cycles": selected,
     }
+
+    # ── central5：全検出サイクルの時間順第4〜第8サイクル ──
+    summary.update(compute_central5_stats(
+        cycles_df,
+        target_cycles=int(cfg.target_cycles),
+        amp_col="amp_y_px",
+        speed_col="vmax_px_s",
+    ))
 
     summary_df = pd.DataFrame([summary])
     return frames_df, cycles_df, summary_df

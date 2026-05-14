@@ -247,6 +247,15 @@ python -m apraxia_analysis.main \
 3. `target_cycles`（デフォルト10）個の連続サイクルを全窓で走査し、最適な窓を選択
    - **hammer / byebye / comehere** : サイクル時間の変動係数（CV）が最小の窓を選択（3タスク共通）
 4. 選択ブロックの波形相関（各サイクル vs ブロック平均波形）で一致性を評価し `waveform_pass_10` を出力
+5. 全検出サイクルを時間順に並べた第4〜第8サイクル（**central5**）の指標を `summary.csv` に追加出力
+   - `central5_available` : 第4〜第8サイクルが5本揃っているか（1=揃っている / 0=不足）
+   - `n_cycles_central5` : central5 として実際に使用したサイクル数（通常5）
+   - `qc_cycle_count_warning` : 検出サイクル数が `target_cycles` と異なる場合に 1（要確認フラグ）
+   - `cycle_time_mean_s_central5` / `cycle_time_sd_s_central5` / `rhythm_cv_central5`
+   - `amp_mean_px_central5` / `amp_sd_px_central5`
+   - `traj_len_mean_px_central5` / `traj_len_sd_px_central5`
+   - `max_speed_mean_px_s_central5` / `max_speed_sd_px_s_central5`
+   - **central5 は selected10 内の第4〜8番ではなく、全検出サイクルの時間順第4〜8サイクル**
 
 ---
 

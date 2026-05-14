@@ -684,3 +684,78 @@ def _best_contiguous_block_by_waveform_then_cv(
                 best_min_corr = min_corr
 
     return int(best_i), float(best_cv), float(best_mean_corr), float(best_min_corr)
+
+
+# ─── central5 統計 ────────────────────────────────────────────────────────────
+
+def compute_central5_stats(
+    cycles_df: "pd.DataFrame",
+    target_cycles: int = 10,
+    amp_col: str = "amp_px",
+    speed_col: str = "max_speed_px_s",
+) -> dict:
+    """全検出サイクルを時間順に並べた第4〜第8サイクル（central5）の統計を算出する。
+
+    central5 は selected10 内の第4〜第8サイクルではなく、
+    全検出サイクルの start_frame 順 [3:8]（cycle_id 4〜8 に相当）。
+
+    Parameters
+    ----------
+    cycles_df    : 全検出サイクルの DataFrame（start_frame 列必須）
+    target_cycles: 研究設計上の予定サイクル数（デフォルト10）
+    amp_col      : 振幅列名（hammer は amp_y_px、byebye/comehere は amp_px）
+    speed_col    : 最大速度列名（hammer は vmax_px_s、byebye/comehere は max_speed_px_s）
+    """
+    import pandas as _pd
+
+    C5_START = 3  # 0-indexed slice start（第4サイクル）
+    C5_END   = 8  # 0-indexed slice end exclusive（第8サイクルまで）
+
+    n_det = int(len(cycles_df)) if (cycles_df is not None and len(cycles_df) > 0) else 0
+
+    if n_det > 0 and "start_frame" in cycles_df.columns:
+        c5_df = (cycles_df
+                 .sort_values("start_frame")
+                 .reset_index(drop=True)
+                 .iloc[C5_START:C5_END])
+    else:
+        c5_df = _pd.DataFrame()
+
+    n_c5 = int(len(c5_df))
+
+    result: dict = {
+        "central5_available":    1 if n_c5 == 5 else 0,
+        "n_cycles_central5":     n_c5,
+        "qc_cycle_count_warning": 0 if n_det == int(target_cycles) else 1,
+    }
+
+    def _stat(col: str) -> "tuple[float, float]":
+        if col not in c5_df.columns or n_c5 == 0:
+            return np.nan, np.nan
+        vals = c5_df[col].to_numpy(dtype=float)
+        vals = vals[np.isfinite(vals)]
+        mean = float(np.nanmean(vals)) if len(vals) >= 1 else np.nan
+        sd   = float(np.nanstd(vals, ddof=1)) if len(vals) >= 2 else np.nan
+        return mean, sd
+
+    ct_mean, ct_sd = _stat("cycle_time_s")
+    result["cycle_time_mean_s_central5"] = ct_mean
+    result["cycle_time_sd_s_central5"]   = ct_sd
+    result["rhythm_cv_central5"] = (
+        float(ct_sd / ct_mean)
+        if (np.isfinite(ct_sd) and np.isfinite(ct_mean) and ct_mean != 0.0)
+        else np.nan
+    )
+
+    amp_mean,  amp_sd  = _stat(amp_col)
+    tl_mean,   tl_sd   = _stat("traj_len_px")
+    spd_mean,  spd_sd  = _stat(speed_col)
+
+    result["amp_mean_px_central5"]          = amp_mean
+    result["amp_sd_px_central5"]            = amp_sd
+    result["traj_len_mean_px_central5"]     = tl_mean
+    result["traj_len_sd_px_central5"]       = tl_sd
+    result["max_speed_mean_px_s_central5"]  = spd_mean
+    result["max_speed_sd_px_s_central5"]    = spd_sd
+
+    return result
