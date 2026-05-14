@@ -915,6 +915,17 @@ def process_hammer_trial(
         target_cycles=int(cfg.target_cycles),
         amp_col="amp_y_px",
         speed_col="vmax_px_s",
+        extra_cols=[
+            ("hit_time_s",        "hit_time_mean_s_central5",        "hit_time_sd_s_central5"),
+            ("lift_time_s",       "lift_time_mean_s_central5",       "lift_time_sd_s_central5"),
+            ("direction_deg_abs", "direction_deg_abs_mean_central5", "direction_deg_abs_sd_central5"),
+            ("shoulder_deg_range","shoulder_deg_range_mean_central5","shoulder_deg_range_sd_central5"),
+            ("elbow_deg_range",   "elbow_deg_range_mean_central5",   "elbow_deg_range_sd_central5"),
+            ("wrist_deg_range",   "wrist_deg_range_mean_central5",   "wrist_deg_range_sd_central5"),
+            ("shoulder_deg_mean", "shoulder_deg_mean_mean_central5", "shoulder_deg_mean_sd_central5"),
+            ("elbow_deg_mean",    "elbow_deg_mean_mean_central5",    "elbow_deg_mean_sd_central5"),
+            ("wrist_deg_mean",    "wrist_deg_mean_mean_central5",    "wrist_deg_mean_sd_central5"),
+        ],
     ))
 
     summary_df = pd.DataFrame([summary])

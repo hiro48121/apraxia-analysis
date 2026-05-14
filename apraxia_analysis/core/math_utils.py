@@ -693,6 +693,7 @@ def compute_central5_stats(
     target_cycles: int = 10,
     amp_col: str = "amp_px",
     speed_col: str = "max_speed_px_s",
+    extra_cols: "list[tuple[str, str, str]] | None" = None,
 ) -> dict:
     """全検出サイクルを時間順に並べた第4〜第8サイクル（central5）の統計を算出する。
 
@@ -705,6 +706,8 @@ def compute_central5_stats(
     target_cycles: 研究設計上の予定サイクル数（デフォルト10）
     amp_col      : 振幅列名（hammer は amp_y_px、byebye/comehere は amp_px）
     speed_col    : 最大速度列名（hammer は vmax_px_s、byebye/comehere は max_speed_px_s）
+    extra_cols   : タスク固有追加列のリスト。各要素は
+                   (cycles_df列名, mean出力列名, sd出力列名) の3タプル。
     """
     import pandas as _pd
 
@@ -757,5 +760,11 @@ def compute_central5_stats(
     result["traj_len_sd_px_central5"]       = tl_sd
     result["max_speed_mean_px_s_central5"]  = spd_mean
     result["max_speed_sd_px_s_central5"]    = spd_sd
+
+    if extra_cols:
+        for src_col, mean_name, sd_name in extra_cols:
+            m, s = _stat(src_col)
+            result[mean_name] = m
+            result[sd_name]   = s
 
     return result

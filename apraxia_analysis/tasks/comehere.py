@@ -788,6 +788,17 @@ def run_comehere(argv: list[str] | None = None) -> None:
         target_cycles=int(args.target_cycles),
         amp_col="amp_px",
         speed_col="max_speed_px_s",
+        extra_cols=[
+            ("area_px2",            "area_mean_px2_central5",              "area_sd_px2_central5"),
+            ("shoulder_deg_range",  "shoulder_deg_range_mean_central5",    "shoulder_deg_range_sd_central5"),
+            ("elbow_deg_range",     "elbow_deg_range_mean_central5",       "elbow_deg_range_sd_central5"),
+            ("wrist_deg_range",     "wrist_deg_range_mean_central5",       "wrist_deg_range_sd_central5"),
+            ("index_mcp_deg_range", "index_mcp_deg_range_mean_central5",   "index_mcp_deg_range_sd_central5"),
+            ("shoulder_deg_mean",   "shoulder_deg_mean_mean_central5",     "shoulder_deg_mean_sd_central5"),
+            ("elbow_deg_mean",      "elbow_deg_mean_mean_central5",        "elbow_deg_mean_sd_central5"),
+            ("wrist_deg_mean",      "wrist_deg_mean_mean_central5",        "wrist_deg_mean_sd_central5"),
+            ("index_mcp_deg_mean",  "index_mcp_deg_mean_mean_central5",    "index_mcp_deg_mean_sd_central5"),
+        ],
     ))
 
     summary_df = pd.DataFrame([meta])
