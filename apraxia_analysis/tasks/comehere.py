@@ -32,7 +32,7 @@ from ..core.math_utils import (
     build_cycles_from_extrema,
     _cycle_waveforms_from_y,
     _corr_to_mean_wave,
-    _best_contiguous_block_by_waveform_then_cv,
+    select_best_contiguous_cycles_by_cv,
 )
 from ..core.video_extractor import extract_pose_hand_px_from_video
 
@@ -83,21 +83,19 @@ def _detect_cycles_comehere(
     min_amp_px: float,
     min_cycle_s: float,
     max_cycle_s: float,
-    index_y_sm: np.ndarray,
-    waveform_resample_n: int,
 ) -> dict[str, Any]:
-    """comehere のサイクル検出（単回）と波形一貫性優先のブロック選択。
+    """comehere のサイクル検出（単回）と CV 最小によるブロック選択。
 
-    おいでおいで動作は振れ幅が比較的安定しているため、byebye のような多段階
-    閾値緩和は行わず単回検出とする。ブロック選択は波形の一貫性を優先し、
-    同等の場合にサイクル時間 CV が最小の窓を選ぶ（``_best_contiguous_block_by_waveform_then_cv``）。
+    byebye のような多段階閾値緩和は行わず単回検出とする。
+    ブロック選択は hammer / byebye と同様に、サイクル時間 CV が最小となる
+    連続 target_n サイクルの窓を選ぶ（``select_best_contiguous_cycles_by_cv``）。
+    波形相関は選択基準に使わず、選択後の QC 指標として算出する。
     Returns a dict with keys: maxima_f, minima_f, cycles_all, selected_cycles, selected_cv,
-    selected_window_start_idx, best_mean_corr, best_min_corr.
+    selected_window_start_idx.
     """
     _empty: dict[str, Any] = {
         "maxima_f": [], "minima_f": [], "cycles_all": [],
         "selected_cycles": [], "selected_cv": np.nan, "selected_window_start_idx": 0,
-        "best_mean_corr": np.nan, "best_min_corr": np.nan,
     }
     if search_end < search_start:
         return _empty
@@ -124,35 +122,20 @@ def _detect_cycles_comehere(
         max_cycle_s=float(max_cycle_s),
     )
 
-    # target_n 個の連続ブロックを選択: 波形一貫性を優先し、同等ならサイクル時間CVが最小の窓を選ぶ
+    # 全検出サイクルの中から、連続 target_n 個でサイクル時間の CV が最小の窓を選ぶ
     if len(cycles_all) >= target_n and target_n > 0:
-        tmp_cycles = pd.DataFrame([
-            {"start_frame": int(c["start_frame"]), "end_frame": int(c["end_frame"])}
-            for c in cycles_all
-        ])
-        cycle_times = np.array(
-            [(int(c["end_frame"]) - int(c["start_frame"])) / float(fps) for c in cycles_all],
-            dtype=float,
+        selected_cycles, selected_cv, selected_window_start_idx = select_best_contiguous_cycles_by_cv(
+            cycles_all, fps=fps, target_n=target_n
         )
-        waveforms_all = _cycle_waveforms_from_y(index_y_sm, tmp_cycles, waveform_resample_n)
-
-        best_i, best_cv, best_mean_corr, best_min_corr = _best_contiguous_block_by_waveform_then_cv(
-            cycle_times, waveforms_all, target_n
-        )
-        selected_window_start_idx = int(best_i)
-        selected_cv = float(best_cv) if np.isfinite(best_cv) else np.nan
-        selected_cycles = cycles_all[selected_window_start_idx : selected_window_start_idx + target_n]
     else:
         selected_cycles = cycles_all
         selected_cv = np.nan
         selected_window_start_idx = 0
-        best_mean_corr, best_min_corr = np.nan, np.nan
 
     return {
         "maxima_f": maxima_f, "minima_f": minima_f, "cycles_all": cycles_all,
         "selected_cycles": selected_cycles, "selected_cv": selected_cv,
         "selected_window_start_idx": selected_window_start_idx,
-        "best_mean_corr": best_mean_corr, "best_min_corr": best_min_corr,
     }
 
 
@@ -508,7 +491,6 @@ def run_comehere(argv: list[str] | None = None) -> None:
             search_end = min(search_end, int(trim_end_frame))
         cycle_search_used_trim = 1
 
-    # comehere の主運動方向は縦（Y 軸）のため、index_y_sm をブロック選択の波形基準に使う
     win_wrist = _odd(int(round(float(args.smooth_sec) * float(fps))))
     index_y_sm = rolling_mean(iy_clean, win_wrist)
 
@@ -525,15 +507,12 @@ def run_comehere(argv: list[str] | None = None) -> None:
         min_amp_px=float(args.min_amp_px),
         min_cycle_s=float(args.min_cycle_s),
         max_cycle_s=float(args.max_cycle_s),
-        index_y_sm=index_y_sm,
-        waveform_resample_n=int(args.waveform_resample_n),
     )
     cycles_all = det["cycles_all"]
     selected_cycles = det["selected_cycles"]
     selected_cv = det["selected_cv"]
     selected_window_start_idx = det["selected_window_start_idx"]
-    best_mean_corr = det["best_mean_corr"]
-    best_min_corr = det["best_min_corr"]
+    best_mean_corr, best_min_corr = np.nan, np.nan  # comehere も CV 最小のみで選択するため波形相関は使わない
 
     # -------------------------
     # frames.csv (always saved)
