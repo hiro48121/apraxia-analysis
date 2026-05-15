@@ -639,8 +639,8 @@ def _best_contiguous_block_by_waveform_then_cv(
 ) -> tuple[int, float, float, float]:
     """波形一貫性優先で最適な連続サイクルブロックを選択する（同等の場合はリズム CV 最小）。
 
-    comehere タスクで使用。byebye（CV 最小選択）と異なり、
-    波形の類似度（mean_corr）が高いブロックを優先する。
+    旧版参照用。現行の comehere / byebye はサイクル時間 CV 最小選択に統一済みであり、
+    この関数は現行処理では使用していない。
 
     Returns (best_start_index, best_cv, best_mean_corr, best_min_corr).
     """
