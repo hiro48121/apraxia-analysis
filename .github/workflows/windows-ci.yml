@@ -1,0 +1,48 @@
+name: Windows CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  windows-check:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check library imports
+        run: python -c "import mediapipe; import cv2; import numpy; import pandas; import scipy; import matplotlib; import PIL; import av; print('libs OK')"
+
+      - name: Check apraxia_analysis core imports
+        run: python -c "from apraxia_analysis.core import math_utils, video_extractor; print('core OK')"
+
+      - name: Check apraxia_analysis task imports
+        run: python -c "from apraxia_analysis.tasks import hammer, byebye, comehere; print('tasks OK')"
+
+      - name: Check tkinter
+        run: python -c "import tkinter; root = tkinter.Tk(); root.destroy(); print('tkinter OK')"
+
+      - name: Syntax check (py_compile)
+        run: |
+          python -m py_compile apraxia_app.py
+          python -m py_compile apraxia_analysis/core/math_utils.py
+          python -m py_compile apraxia_analysis/core/video_extractor.py
+          python -m py_compile apraxia_analysis/tasks/hammer.py
+          python -m py_compile apraxia_analysis/tasks/byebye.py
+          python -m py_compile apraxia_analysis/tasks/comehere.py
+          Write-Host "syntax check OK"
