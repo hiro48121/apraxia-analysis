@@ -325,7 +325,7 @@ def run_comehere(argv: list[str] | None = None) -> None:
       2. 外れ値処理（ジャンプ検出・Hand/Pose 整合チェック）
       3. 動作開始フレームと動作区間を手首速度ベースで検出
       4. 縦方向（dy）信号からサイクルを検出（単回）
-      5. 波形一貫性優先で連続10サイクルを選択（同等の場合は CV 最小）
+      5. サイクル時間 CV 最小で連続10サイクルを選択
       6. 選択ブロックの波形類似度 QC を実施
       7. frames.csv / cycles.csv / summary.csv / waveform PNG を保存
     """

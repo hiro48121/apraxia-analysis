@@ -324,7 +324,9 @@ def _best_contiguous_block_by_waveform_then_cv(
     waveforms: np.ndarray,
     target: int,
 ) -> tuple[int, float, float, float]:
-    """Select best block: prioritise mean waveform correlation, then CV.
+    """旧版参照用。現行の hammer 処理では使用していない。
+
+    Select best block: prioritise mean waveform correlation, then CV.
 
     Returns (best_start_index, best_cv, best_mean_corr, best_min_corr).
     """
