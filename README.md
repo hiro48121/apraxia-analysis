@@ -138,7 +138,7 @@ python apraxia_app.py
 
 | OS | ファイル | 操作 |
 |----|---------|------|
-| macOS | `apraxia_app.command` | ターミナルから `chmod +x apraxia_app.command` を実行後、ダブルクリック |
+| macOS | `apraxia_app.command` | ダブルクリック |
 | Windows | `apraxia_app.bat` | ダブルクリック |
 
 > **macOS の初回起動時**: Gatekeeper によりブロックされる場合は、右クリック →「開く」を選択してください。
