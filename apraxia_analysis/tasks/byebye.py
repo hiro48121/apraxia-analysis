@@ -872,6 +872,42 @@ def run_byebye(argv: list[str] | None = None) -> None:
         ],
     ))
 
+    # ── 体幹長正規化指標（summary.csv 末尾追加。既存列・値は変更しない）──
+    _sx = frames["shoulder_x_px"].to_numpy(dtype=float)
+    _sy = frames["shoulder_y_px"].to_numpy(dtype=float)
+    _hx = frames["hip_x_px"].to_numpy(dtype=float)
+    _hy = frames["hip_y_px"].to_numpy(dtype=float)
+    _trunk = np.hypot(_sx - _hx, _sy - _hy)
+    _n = len(_trunk)
+    _ts = int(trim_start_frame) if (trim_start_frame is not None and np.isfinite(trim_start_frame)) else -1
+    _te = int(trim_end_frame) if (trim_end_frame is not None and np.isfinite(trim_end_frame)) else -1
+    if 0 <= _ts < _n and 0 <= _te < _n and _te >= _ts:
+        _seg = _trunk[_ts : _te + 1]
+        _seg = _seg[np.isfinite(_seg)]
+        if len(_seg) > 0:
+            _trunk_med = float(np.median(_seg))
+        else:
+            _all_v = _trunk[np.isfinite(_trunk)]
+            _trunk_med = float(np.median(_all_v)) if len(_all_v) > 0 else np.nan
+    else:
+        _all_v = _trunk[np.isfinite(_trunk)]
+        _trunk_med = float(np.median(_all_v)) if len(_all_v) > 0 else np.nan
+
+    def _tnorm(v: float, d: float) -> float:
+        return float(v / d) if (np.isfinite(v) and np.isfinite(d) and d > 0.0) else np.nan
+
+    _trunk_med2 = float(_trunk_med ** 2) if (np.isfinite(_trunk_med) and _trunk_med > 0.0) else np.nan
+
+    meta["trunk_length_px_median"]               = _trunk_med
+    meta["amp_mean_trunk_norm_central5"]          = _tnorm(meta.get("amp_mean_px_central5", np.nan), _trunk_med)
+    meta["amp_sd_trunk_norm_central5"]            = _tnorm(meta.get("amp_sd_px_central5", np.nan), _trunk_med)
+    meta["traj_len_mean_trunk_norm_central5"]     = _tnorm(meta.get("traj_len_mean_px_central5", np.nan), _trunk_med)
+    meta["traj_len_sd_trunk_norm_central5"]       = _tnorm(meta.get("traj_len_sd_px_central5", np.nan), _trunk_med)
+    meta["max_speed_mean_trunk_norm_s_central5"]  = _tnorm(meta.get("max_speed_mean_px_s_central5", np.nan), _trunk_med)
+    meta["max_speed_sd_trunk_norm_s_central5"]    = _tnorm(meta.get("max_speed_sd_px_s_central5", np.nan), _trunk_med)
+    meta["area_mean_trunk_norm2_central5"]        = _tnorm(meta.get("area_mean_px2_central5", np.nan), _trunk_med2)
+    meta["area_sd_trunk_norm2_central5"]          = _tnorm(meta.get("area_sd_px2_central5", np.nan), _trunk_med2)
+
     summary_df = pd.DataFrame([meta])
 
     # -------------------------
